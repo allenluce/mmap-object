@@ -1,0 +1,34 @@
+sudo: true
+dist: trusty
+language: node_js
+compiler:
+  - gcc
+cache:
+  directories:
+    - node_modules
+notifications:
+  email: true
+node_js:
+  - '5'
+  - '4'
+  - iojs-v3
+  - iojs-v2
+  - iojs-v1
+before_install:
+  - npm i -g npm@^2.0.0
+before_script:
+  - npm prune
+after_success:
+  - npm run semantic-release
+branches:
+  except:
+    - "/^v\\d+\\.\\d+\\.\\d+$/"
+addons:
+  apt:
+    sources:
+      - boost-latest
+      - ubuntu-toolchain-r-test
+    packages:
+      - g++-4.9
+      - libboost-system1.55-dev
+      - libboost-thread1.55-dev

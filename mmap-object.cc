@@ -172,7 +172,11 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
         shared_string *string_key;
         char_allocator allocer(self->map_seg->get_segment_manager());
         string_key = new shared_string(string(*prop).c_str(), allocer);
-        self->property_map->insert({*string_key, *c});
+        auto pair = self->property_map->insert({*string_key, *c});
+        if (!pair.second) {
+          self->property_map->erase(*string_key);
+          self->property_map->insert({*string_key, *c});
+        }
         break;
       } catch(std::length_error) {
         self->grow(data_length * 2);

@@ -19,6 +19,10 @@ describe('Interprocess', function () {
     expect(this.reader.first).to.equal('value for first')
   })
 
+  it('reads a string that was written twice', function () {
+    expect(this.reader.samekey).to.equal('first value and a new value too')
+  })
+
   it('reads a number', function () {
     expect(this.reader.second).to.equal(0.207879576)
   })

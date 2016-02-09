@@ -135,6 +135,8 @@ describe('Datum', function () {
       writer['second'] = 0.207879576
       const bigKey = new Array(1000).join('fourty-nine thousand nine hundred fifty bytes long')
       writer[bigKey] = new Array(10000).join('six hundred seventy nine thousand nine hundred thirty two bytes long')
+      writer['samekey'] = 'first value'
+      writer['samekey'] = writer['samekey'] + ' and a new value too'
       writer.close()
       this.reader = new MmapObject.Open(this.testfile)
     })

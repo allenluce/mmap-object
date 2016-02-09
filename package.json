@@ -1,7 +1,7 @@
 {
   "name": "mmap-object",
   "version": "1.0.0",
-  "description": "",
+  "description": "Wrap a shared memory-mapped file in a plain old object.",
   "main": "index.js",
   "scripts": {
     "test": "mocha test/test-*",

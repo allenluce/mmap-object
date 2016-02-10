@@ -263,6 +263,11 @@ INFO_METHOD(load_factor, float, property_map)
 INFO_METHOD(max_load_factor, float, property_map)
 
 NAN_METHOD(SharedMap::Create) {
+  if (!info.IsConstructCall()) {
+    Nan::ThrowError("Create must be called as a constructor.");
+    return;
+  }
+
   Nan::Utf8String filename(info[0]->ToString());
   size_t file_size = (int)info[1]->Int32Value();
   size_t initial_bucket_count = (int)info[2]->Int32Value();
@@ -308,6 +313,11 @@ NAN_METHOD(SharedMap::Create) {
 }
 
 NAN_METHOD(SharedMap::Open) {
+  if (!info.IsConstructCall()) {
+    Nan::ThrowError("Open must be called as a constructor.");
+    return;
+  }
+
   Nan::Utf8String filename(info[0]->ToString());
   SharedMap *d = new SharedMap();
 

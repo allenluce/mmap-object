@@ -23,27 +23,32 @@ describe('Datum', function () {
       this.shobj.close()
     })
 
-    it('Must be called as a constructor.')
-    
-    it('sets properties to a string.', function () {
+    it('must be called as a constructor', function () {
+      expect(() => {
+        const obj = MmapObject.Create(path.join(this.dir, 'non-constructor'))
+        expect(obj).to.not.exist
+      }).to.throw(/Create must be called as a constructor./)
+    })
+
+    it('sets properties to a string', function () {
       this.shobj.my_string_property = 'my value'
       this.shobj['some other property'] = 'some other value'
       this.shobj['one more property'] = new Array(1000).join('A bunch of strings')
     })
 
-    it('sets properties to a number.', function () {
+    it('sets properties to a number', function () {
       this.shobj.my_number_property = 12
       expect(this.shobj.my_number_property).to.equal(12)
       this.shobj['some other number property'] = 0.2
       expect(this.shobj['some other number property']).to.equal(0.2)
     })
 
-    it('gets a property.', function () {
+    it('gets a property', function () {
       this.shobj.another_property = 'whateever value'
       expect(this.shobj.another_property).to.equal('whateever value')
     })
 
-    it('has undefined unset properties.', function () {
+    it('has undefined unset properties', function () {
       expect(this.shobj.noother_property).to.be.undefined
     })
 
@@ -72,7 +77,7 @@ describe('Datum', function () {
       expect(fs.statSync(filename)['size']).to.above(500)
     })
 
-    it('bombs when file gets too big.', function () {
+    it('bombs when file gets too big', function () {
       const filename = path.join(this.dir, 'bomb_me')
       const smallobj = new MmapObject.Create(filename, 500, 4, 20000)
       smallobj['key'] = new Array(1000).join('big')
@@ -141,6 +146,13 @@ describe('Datum', function () {
       this.reader = new MmapObject.Open(this.testfile)
     })
 
+    it('must be called as a constructor', function () {
+      expect(() => {
+        const obj = MmapObject.Open(this.testfile)
+        expect(obj).to.not.exist
+      }).to.throw(/Open must be called as a constructor./)
+    })
+
     it('works across copies', function () {
       const newfile = path.join(this.dir, 'copiertest')
       fs.writeFileSync(newfile, fs.readFileSync(this.testfile))
@@ -157,10 +169,11 @@ describe('Datum', function () {
         done()
       })
     })
-      
+
     it('bombs on non-existing file', function () {
       expect(function () {
-        new MmapObject.Open('/tmp/no_file_at_all')
+        const obj = new MmapObject.Open('/tmp/no_file_at_all')
+        expect(obj).to.not.exist
       }).to.throw(/.tmp.no_file_at_all does not exist./)
     })
 
@@ -173,20 +186,21 @@ describe('Datum', function () {
       }).to.throw(/Cannot read from closed object./)
     })
 
-    it('cannot set properties.', function () {
+    it('cannot set properties', function () {
       const reader = this.reader
       expect(function () {
         reader.my_string_property = 'my value'
       }).to.throw(/Read-only object./)
     })
 
-    it('can get stored strings.', function () {
+    it('can get stored strings', function () {
       expect(this.reader.first).to.equal('value for first')
     })
 
     it('bombs on bad file', function () {
       expect(function () {
-        new MmapObject.Open('/dev/null')
+        const obj = new MmapObject.Open('/dev/null')
+        expect(obj).to.not.exist
       }).to.throw(/.dev.null is not a regular file./)
     })
   })

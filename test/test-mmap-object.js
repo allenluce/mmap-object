@@ -24,8 +24,9 @@ describe('Datum', function () {
     })
 
     it('must be called as a constructor', function () {
-      expect(() => {
-        const obj = MmapObject.Create(path.join(this.dir, 'non-constructor'))
+      const dir = this.dir
+      expect(function () {
+        const obj = MmapObject.Create(path.join(dir, 'non-constructor'))
         expect(obj).to.not.exist
       }).to.throw(/Create must be called as a constructor./)
     })
@@ -147,8 +148,9 @@ describe('Datum', function () {
     })
 
     it('must be called as a constructor', function () {
-      expect(() => {
-        const obj = MmapObject.Open(this.testfile)
+      const testfile = this.testfile
+      expect(function () {
+        const obj = MmapObject.Open(testfile)
         expect(obj).to.not.exist
       }).to.throw(/Open must be called as a constructor./)
     })

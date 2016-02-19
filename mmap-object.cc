@@ -35,7 +35,7 @@ private:
     values(const char *value, char_allocator allocator): string_value(value, allocator) {}
     values(const double value): number_value(value) {}
     values() {}
-    ~values() {/* todo: destroy here */}
+    ~values() {}
   } cell_value;
 public:
   Cell(const char *value, char_allocator allocator) : cell_type(STRING_TYPE), cell_value(value, allocator) {}

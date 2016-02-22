@@ -1,7 +1,7 @@
 {
   "targets": [
     {
-      "target_name": "mmap-object",
+      "target_name": "<(module_name)",
       "sources": [
         "mmap-object.cc"
       ],
@@ -12,8 +12,8 @@
         "-fexceptions",
         "-frtti"
       ],
-      'link_settings': {
-        'ldflags': [
+      "link_settings": {
+        "ldflags": [
           "-L/usr/lib64/boost148"
         ]
       },
@@ -51,6 +51,21 @@
       "include_dirs": [
         "<!(node -e \"require('nan')\")",
         "/usr/include/boost148/"
+      ]
+    },
+    {
+      "target_name": "action_after_build",
+      "type": "none",
+      "dependencies": [
+        "<(module_name)"
+      ],
+      "copies": [
+        {
+          "files": [
+            "<(PRODUCT_DIR)/<(module_name).node"
+          ],
+          "destination": "<(module_path)"
+        }
       ]
     }
   ]

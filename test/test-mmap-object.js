@@ -1,9 +1,11 @@
 'use strict'
 /* global describe it beforeEach afterEach before after */
-const expect = require('chai').expect
-const MmapObject = require('../build/Release/mmap-object.node')
-const temp = require('temp')
+const binary = require('node-pre-gyp')
 const path = require('path')
+const mmap_obj_path = binary.find(path.resolve(path.join(__dirname, '../package.json')))
+const MmapObject = require(mmap_obj_path)
+const expect = require('chai').expect
+const temp = require('temp')
 const child_process = require('child_process')
 const fs = require('fs')
 const which = require('which')

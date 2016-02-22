@@ -5,7 +5,7 @@
 #include <boost/unordered_map.hpp>
 #include <nan.h>
 
-#define MINIMUM_FILE_SIZE 500
+#define MINIMUM_FILE_SIZE 500 // Minimum necessary to handle an mmap'd unordered_map on all platforms.
 #define DEFAULT_FILE_SIZE 5ul<<20 // 5 megs
 #define DEFAULT_MAX_SIZE 5000ul<<20 // 5000 megs
 
@@ -25,6 +25,8 @@ typedef bip::basic_string<char, char_traits<char>> char_string;
 #define UNINITIALIZED 0
 #define STRING_TYPE 1
 #define NUMBER_TYPE 2
+class WrongPropertyType: public exception {};
+class FileTooLarge: public exception {};
 
 class Cell {
 private:
@@ -37,12 +39,15 @@ private:
     values() {}
     ~values() {}
   } cell_value;
+  Cell& operator =(const Cell&) = default;
+  Cell(Cell&&) = default;
+  Cell& operator=(Cell&&) & = default;
 public:
   Cell(const char *value, char_allocator allocator) : cell_type(STRING_TYPE), cell_value(value, allocator) {}
   Cell(const double value) : cell_type(NUMBER_TYPE), cell_value(value) {}
   Cell(const Cell &cell);
   char type() { return cell_type; }
-  const char *c_str() { return cell_value.string_value.c_str(); }
+  const char *c_str();
   operator string();
   operator double();
 };
@@ -83,7 +88,7 @@ public:
   static NAN_MODULE_INIT(Init);
 
 private:
-  char *file_name;
+  string file_name;
   size_t file_size;
   size_t max_file_size;
   bip::managed_mapped_file *map_seg;
@@ -109,16 +114,23 @@ private:
     static Nan::Persistent<v8::Function> my_constructor;
     return my_constructor;
   }
-  ~SharedMap() {delete file_name;}
 };
 
-class FileTooLarge: public exception {};
+const char *Cell::c_str() {
+  if (type() != STRING_TYPE)
+    throw WrongPropertyType();
+ return cell_value.string_value.c_str();
+}
 
 Cell::operator string() {
+  if (type() != STRING_TYPE)
+    throw WrongPropertyType();
   return cell_value.string_value.c_str();
 }
 
 Cell::operator double() {
+  if (type() != NUMBER_TYPE)
+    throw WrongPropertyType();
   return cell_value.number_value;
 }
 
@@ -149,7 +161,7 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
   }
   
   size_t data_length = sizeof(Cell);
-  
+
   try {
     Cell *c;
     while(true) {
@@ -214,7 +226,6 @@ NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
   
   if (pair == self->property_map->end())
     return;
-  
   Cell *c = &pair->second;
   if (c->type() == STRING_TYPE) {
     info.GetReturnValue().Set(Nan::New<v8::String>(c->c_str()).ToLocalChecked());
@@ -272,7 +283,6 @@ NAN_METHOD(SharedMap::Create) {
   size_t file_size = (int)info[1]->Int32Value();
   size_t initial_bucket_count = (int)info[2]->Int32Value();
   size_t max_file_size = (int)info[3]->Int32Value();
-  
   SharedMap *d = new SharedMap();
 
   if (file_size == 0) {
@@ -353,20 +363,18 @@ NAN_METHOD(SharedMap::Open) {
 }
 
 void SharedMap::setFilename(string fn_string) {
-  file_name = new char[fn_string.size() + 1];
-  std::copy(fn_string.begin(), fn_string.end(), file_name);
-  file_name[fn_string.size()] = '\0';
+  file_name = fn_string;
 }
 
 void SharedMap::grow(size_t size) {
-  map_seg->flush();
-  delete map_seg;
   file_size += size;
   if (file_size > max_file_size) {
     throw FileTooLarge();
   }
-  bip::managed_mapped_file::grow(file_name, size);
-  map_seg = new bip::managed_mapped_file(bip::open_only, file_name);
+  map_seg->flush();
+  delete map_seg;
+  bip::managed_mapped_file::grow(file_name.c_str(), size);
+  map_seg = new bip::managed_mapped_file(bip::open_only, file_name.c_str());
   property_map = map_seg->find<PropertyHash>("properties").first;
   closed = false;
 }
@@ -374,9 +382,10 @@ void SharedMap::grow(size_t size) {
 
 NAN_METHOD(SharedMap::Close) {
   auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
-  bip::managed_mapped_file::shrink_to_fit(self->file_name);
+  bip::managed_mapped_file::shrink_to_fit(self->file_name.c_str());
   self->map_seg->flush();
   delete self->map_seg;
+  self->map_seg = NULL;
   self->closed = true;
 }
 

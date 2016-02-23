@@ -1,12 +1,17 @@
 {
   "name": "mmap-object",
   "description": "Wrap a shared memory-mapped file in a plain old object.",
-  "main": "build/Release/mmap-object",
+  "main": "lib/mmap-object",
   "scripts": {
     "test": "mocha test/test-*",
-    "install": "node-gyp rebuild",
-    "semantic-release": "semantic-release pre && npm publish && semantic-release post"
+    "install": "node-pre-gyp install --fallback-to-build"
   },
+  "binary": {
+    "module_name": "mmap-object",
+    "module_path": "./lib",
+    "host": "https://foss-packages.s3.amazonaws.com"
+  },
+  "version": "1.0.4",
   "author": "Allen Luce",
   "repository": {
     "type": "git",
@@ -15,14 +20,15 @@
   "license": "UNLICENSED",
   "gypfile": true,
   "dependencies": {
-    "nan": "^2.2.0"
+    "nan": "^2.2.0",
+    "node-pre-gyp": "^0.6.21"
   },
   "devDependencies": {
+    "aws-sdk": "^2.2.37",
     "chai": "^3.5.0",
     "cz-conventional-changelog": "^1.1.5",
     "mocha": "^2.4.5",
     "node-gyp": "^3.2.1",
-    "semantic-release": "^4.3.5",
     "temp": "^0.8.3",
     "which": "^1.2.4"
   },

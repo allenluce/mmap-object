@@ -249,11 +249,12 @@ describe('Datum', function () {
     })
   })
 
-  describe.only('Still can read old format', function () {
+  describe.skip('Still can read old format', function () {
     before(function () {
       const old_format_file = `${__dirname}/previous-format.bin`
       this.oldformat = new MmapObject.Open(old_format_file)
     })
+
     after(function () {
       this.oldformat.close()
     })

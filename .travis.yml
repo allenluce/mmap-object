@@ -21,3 +21,23 @@ addons:
       - g++-4.9
       - libboost-system1.55-dev
       - libboost-thread1.55-dev
+
+before_install:
+  - npm install -g node-gyp node-pre-gyp node-pre-gyp-github
+  - COMMIT_MESSAGE=$(git show -s --format=%B $TRAVIS_COMMIT | tr -d '\n')
+  - if [[ $TRAVIS_BRANCH == `git describe --tags --always HEAD` ]]; then PUBLISH_BINARY=true; fi;
+  - echo "Publishing native platform Binary Package? ->" $PUBLISH_BINARY
+  - if test "${COMMIT_MESSAGE#*'[publish binary]'}" != "$COMMIT_MESSAGE"; then PUBLISH_BINARY=true; fi;
+  - echo "Publishing native platform Binary Package? ->" $PUBLISH_BINARY
+
+install:
+  - npm install --build-from-source
+
+script:
+  - npm test
+  - if [[ $PUBLISH_BINARY == true ]]; then node-pre-gyp package; fi;
+  - if [[ $PUBLISH_BINARY == true ]]; then node-pre-gyp-github publish --release; fi;
+  - node-pre-gyp clean
+  - node-gyp clean
+  # Test binary exists
+  - if [[ $PUBLISH_BINARY == true ]]; then npm install --fallback-to-build=false; fi;

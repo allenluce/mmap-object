@@ -8,10 +8,11 @@
   },
   "binary": {
     "module_name": "mmap-object",
-    "module_path": "./lib",
-    "host": "https://foss-packages.s3.amazonaws.com"
+    "module_path": "./build/{configuration}/{node_abi}-{platform}-{arch}/",
+    "package_name": "{node_abi}-{platform}-{arch}.tar.gz",
+    "host": "https://github.com/allenluce/mmap-object/releases/download/1.0.5"
   },
-  "version": "1.0.4",
+  "version": "1.0.5",
   "author": "Allen Luce",
   "repository": {
     "type": "git",
@@ -21,7 +22,8 @@
   "gypfile": true,
   "dependencies": {
     "nan": "^2.2.0",
-    "node-pre-gyp": "^0.6.21"
+    "node-pre-gyp": "^0.6.21",
+    "node-pre-gyp-github": "^1.1.2"
   },
   "devDependencies": {
     "aws-sdk": "^2.2.37",

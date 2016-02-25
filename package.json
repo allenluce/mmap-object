@@ -10,9 +10,9 @@
     "module_name": "mmap-object",
     "module_path": "./build/{configuration}/{node_abi}-{platform}-{arch}/",
     "package_name": "{node_abi}-{platform}-{arch}.tar.gz",
-    "host": "https://github.com/allenluce/mmap-object/releases/download/1.0.5"
+    "host": "https://github.com/allenluce/mmap-object/releases/download/1.0.6"
   },
-  "version": "1.0.5",
+  "version": "1.0.6",
   "author": "Allen Luce",
   "repository": {
     "type": "git",

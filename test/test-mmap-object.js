@@ -1,9 +1,11 @@
 'use strict'
 /* global describe it beforeEach afterEach before after */
-const expect = require('chai').expect
-const MmapObject = require('../build/Release/mmap-object.node')
-const temp = require('temp')
+const binary = require('node-pre-gyp')
 const path = require('path')
+const mmap_obj_path = binary.find(path.resolve(path.join(__dirname, '../package.json')))
+const MmapObject = require(mmap_obj_path)
+const expect = require('chai').expect
+const temp = require('temp')
 const child_process = require('child_process')
 const fs = require('fs')
 const which = require('which')
@@ -244,6 +246,28 @@ describe('Datum', function () {
       const reader_prototype = Object.getPrototypeOf(this.reader1)
       const writer_prototype = Object.getPrototypeOf(this.writer1)
       expect(reader_prototype).to.not.equal(writer_prototype)
+    })
+  })
+
+  describe.skip('Still can read old format', function () {
+    before(function () {
+      const old_format_file = `${__dirname}/previous-format.bin`
+      this.oldformat = new MmapObject.Open(old_format_file)
+    })
+
+    after(function () {
+      this.oldformat.close()
+    })
+
+    it('reads string properties', function () {
+      expect(this.oldformat.my_string_property).to.equal('Some old value')
+      expect(this.oldformat['some other property']).to.equal('some other old value')
+      expect(this.oldformat['one more property']).to.deep.equal(new Array(1000).join('A giant bunch of strings'))
+    })
+
+    it('reads number properties', function () {
+      expect(this.oldformat.my_number_property).to.equal(27)
+      expect(this.oldformat['some other number property']).to.equal(23.42)
     })
   })
 })

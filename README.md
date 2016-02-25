@@ -147,3 +147,18 @@ a different type value results in an exception.
 Symbols are not supported as properties.
 
 Enumeration is not supported.
+
+## Publishing a binary release
+
+These are the steps for making a new binary release:
+
+- Edit package.json.  Increment the version numbers on the "host" and
+  "version" properties in the "binary" object.
+- node-pre-gyp rebuild
+- node-pre-gyp package
+- node-pre-gyp-github publish
+- npm publish
+
+You will need a NODE_PRE_GYP_GITHUB_TOKEN with repo:status,
+repo_deployment and public_repo access to the target repo. You'll also
+need write access to the npm repo.

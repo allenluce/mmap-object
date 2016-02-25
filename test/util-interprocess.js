@@ -8,7 +8,10 @@
   allocators.
 */
 
-const MmapObject = require('../build/Release/mmap-object.node')
+const binary = require('node-pre-gyp')
+const path = require('path')
+const mmap_obj_path = binary.find(path.resolve(path.join(__dirname, '../package.json')))
+const MmapObject = require(mmap_obj_path)
 const expect = require('chai').expect
 
 describe('Interprocess', function () {

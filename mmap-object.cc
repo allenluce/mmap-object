@@ -2,6 +2,8 @@
 #include <nan.h>
 #include "mmap-object.h"
 
+__asm__(".symver memcpy,memcpy@GLIBC_2.2.5");
+
 bool s_equal_to::operator()( const char_string& lhs, const shared_string& rhs ) const {
   return string(lhs.c_str()) == string(rhs.c_str());
 }

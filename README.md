@@ -7,24 +7,28 @@ different Node processes running on the same machine.  The shared
 memory is mmap'd from an underlying file.  Object access is handled by
 Boost's unordered map class.  Two modes are currently supported:
 
-## Create Mode
+## Write-only Mode
 
-A single process creates a new file which is mapped to a Javascript
-object.  Setting properties on this object writes those properties to
-the file.
+This is where a single process creates a new file which is mapped to a
+Javascript object.  Setting properties on this object writes those
+properties to the file.  You can read from the object within this mode
+but sharing an object in write-only mode with other processes is
+certain to result in crashes.
 
-## Open mode
+## Read-only mode
 
-This opens an existing file in read-only mode.  Multiple processes can
-open this file, only one copy will remain in memory and is shared
-among those processes.
+This opens an existing file in for reading.  Multiple processes can
+open this file on a shared basis: only one copy will remain in memory
+and is shared among the processes.
 
 ## Node Module
 
 ### Requirements
 
-This requires Boost as well as a c++11 compliant compiler (like GCC
-4.8 or better).
+Binaries are provided for OSX, Linux and various node versions (check
+the releases page to see which). If a binary is not provided for your
+platform, you will need Boost and and a C++11 compliant compiler (like
+GCC 4.8 or better).
 
 ### Installation
 
@@ -68,7 +72,7 @@ __Arguments__
 * `initial_bucket_count` - *Optional* The number of buckets to
   allocate initially.  This is passed to the underlying
   [Boost unordered_map](http://www.boost.org/doc/libs/1_38_0/doc/html/boost/unordered_map.html).
-  Defaults to 1024.
+  Defaults to 1024. Set this to the number of keys you expect to write.
 * `max_file_size` - *Optional* The largest the file is allowed to
   grow.  If data is added beyond this limit, an exception is thrown.
   Defaults to 5 gigabytes.
@@ -104,6 +108,10 @@ let obj = new Open("/tmp/sharedmem")
 Unmaps a previously created or opened file.  If the file was created,
 `close` will first shrink the file to remove any unneeded space that
 may have been allocated.
+
+_Always close your files_ if your process isn't about to exit.
+Failure to do so will result in the process hanging onto references to
+the shared memory. This could eventually chew up all your core.
 
 __Example__
 
@@ -141,24 +149,34 @@ The current maximum load factor
 
 ## Limitations
 
+Enumeration is not supported. In particular,
+[`hasOwnProperty()`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/hasOwnProperty)
+and
+[the `in` operator](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/in)
+will not work correctly. Access the property directly and compare to
+`undefined` to determine if it's there.
+
+_It is strongly recommended_ to pass in the number of keys you expect
+to write when creating the object with `Create`.  If you don't do
+this, the object will resize once you fill it up. This can be a very
+time-consuming process and can result in fragmentation within the
+shared memory object and a larger final file size.
+
 Object values may be only string or number values.  Attempting to set
 a different type value results in an exception.
 
 Symbols are not supported as properties.
 
-Enumeration is not supported.
-
 ## Publishing a binary release
 
-These are the steps for making a new binary release:
+To make a new binary release:
 
-- Edit package.json.  Increment the version numbers on the "host" and
-  "version" properties in the "binary" object.
-- node-pre-gyp rebuild
-- node-pre-gyp package
-- node-pre-gyp-github publish
-- npm publish
+- Edit package.json.  Increment the `version` property.
+- `node-pre-gyp rebuild`
+- `node-pre-gyp package`
+- `node-pre-gyp-github publish`
+- `npm publish`
 
-You will need a NODE_PRE_GYP_GITHUB_TOKEN with repo:status,
-repo_deployment and public_repo access to the target repo. You'll also
-need write access to the npm repo.
+You will need a `NODE_PRE_GYP_GITHUB_TOKEN` with `repo:status`,
+`repo_deployment` and `public_repo` access to the target repo. You'll
+also need write access to the npm repo.

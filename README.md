@@ -119,6 +119,14 @@ __Example__
 obj.close()
 ```
 
+### isOpen()
+
+Return true if this object is currently open.
+
+### isClosed()
+
+Return true if this object has been closed.
+
 ### get_free_memory()
 
 Number of bytes of free storage left in the file.

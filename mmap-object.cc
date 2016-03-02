@@ -101,6 +101,7 @@ private:
   static NAN_METHOD(Open);
   static NAN_METHOD(Close);
   static NAN_METHOD(isClosed);
+  static NAN_METHOD(isOpen);
   static NAN_METHOD(get_free_memory);
   static NAN_METHOD(get_size);
   static NAN_METHOD(bucket_count);
@@ -207,6 +208,8 @@ NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
   if (string(*data) == "prototype")
     return;
   if (string(*src) == "isClosed")
+    return;
+  if (string(*src) == "isOpen")
     return;
   if (string(*src) == "valueOf")
     return;
@@ -394,9 +397,15 @@ NAN_METHOD(SharedMap::isClosed) {
   info.GetReturnValue().Set(self->closed);
 }
 
+NAN_METHOD(SharedMap::isOpen) {
+  auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
+  info.GetReturnValue().Set(!self->closed);
+}
+
 v8::Local<v8::Function> SharedMap::init_methods(v8::Local<v8::FunctionTemplate> f_tpl) {
   Nan::SetPrototypeMethod(f_tpl, "close", Close);
   Nan::SetPrototypeMethod(f_tpl, "isClosed", isClosed);
+  Nan::SetPrototypeMethod(f_tpl, "isOpen", isOpen);
   Nan::SetPrototypeMethod(f_tpl, "get_free_memory", get_free_memory);
   Nan::SetPrototypeMethod(f_tpl, "get_size", get_size);
   Nan::SetPrototypeMethod(f_tpl, "bucket_count", bucket_count);

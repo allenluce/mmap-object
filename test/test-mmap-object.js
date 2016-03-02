@@ -58,8 +58,11 @@ describe('Datum', function () {
     it('write after close gives exception', function () {
       const obj = new MmapObject.Create(path.join(this.dir, 'closetest'))
       obj['first'] = 'value'
+      expect(obj.isClosed()).to.be.false
+      expect(obj.isOpen()).to.be.true
       obj.close()
       expect(obj.isClosed()).to.be.true
+      expect(obj.isOpen()).to.be.false
       expect(function () {
         obj['second'] = 'something'
       }).to.throw(/Cannot write to closed object./)
@@ -184,7 +187,11 @@ describe('Datum', function () {
     it('read after close gives exception', function () {
       const obj = new MmapObject.Open(this.testfile)
       expect(obj.first).to.equal('value for first')
+      expect(obj.isClosed()).to.be.false
+      expect(obj.isOpen()).to.be.true
       obj.close()
+      expect(obj.isClosed()).to.be.true
+      expect(obj.isOpen()).to.be.false
       expect(function () {
         expect(obj.first).to.equal('value for first')
       }).to.throw(/Cannot read from closed object./)

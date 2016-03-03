@@ -183,6 +183,7 @@ To make a new binary release:
 - `node-pre-gyp rebuild`
 - `node-pre-gyp package`
 - `node-pre-gyp-github publish`
+- `rm lib/mmap-object.node`
 - `npm publish`
 
 You will need a `NODE_PRE_GYP_GITHUB_TOKEN` with `repo:status`,

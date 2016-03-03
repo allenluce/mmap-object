@@ -188,3 +188,12 @@ To make a new binary release:
 You will need a `NODE_PRE_GYP_GITHUB_TOKEN` with `repo:status`,
 `repo_deployment` and `public_repo` access to the target repo. You'll
 also need write access to the npm repo.
+
+## MSVS build prerequisites
+
+Setup [Boost](http://www.boost.org/):
+
+bootstrap
+b2 --build-type=complete
+
+Set BOOST_ROOT environment variable.

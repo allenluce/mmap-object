@@ -48,11 +48,9 @@ shared_object.new_property = 'some other value'
 shared_object.close()
 
 // Read a file
-const Shared = require('mmap-object')
+const read_only_shared_object = new Shared.Open('filename')
 
-const shared_object = new Shared.Open('filename')
-
-console.log(`My value is ${shared_object.new_key}`)
+console.log(`My value is ${read_only_shared_object.new_key}`)
 
 ```
 
@@ -183,7 +181,6 @@ To make a new binary release:
 - `node-pre-gyp rebuild`
 - `node-pre-gyp package`
 - `node-pre-gyp-github publish`
-- `rm lib/mmap-object.node`
 - `npm publish`
 
 You will need a `NODE_PRE_GYP_GITHUB_TOKEN` with `repo:status`,

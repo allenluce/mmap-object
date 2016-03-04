@@ -83,7 +83,7 @@ public:
     return boost::hash<char_string>()(key);
   }
 };
-  
+
 typedef boost::unordered_map<
   KeyType,
   ValueType,
@@ -168,7 +168,7 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
     Nan::ThrowError("Symbol properties are not supported.");
     return;
   }
-  
+
   size_t data_length = sizeof(Cell);
 
   try {
@@ -183,20 +183,27 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
         } else if (value->IsNumber()) {
           data_length += sizeof(double);
           c = new Cell(Nan::To<double>(value).FromJust());
-        } else {
+        } else if (!(value->IsUndefined() || value->IsNull())) {
           Nan::ThrowError("Value must be a string or number.");
           return;
         }
-        
+
         v8::String::Utf8Value prop(property);
         data_length += prop.length();
         shared_string *string_key;
         char_allocator allocer(self->map_seg->get_segment_manager());
         string_key = new shared_string(string(*prop).c_str(), allocer);
-        auto pair = self->property_map->insert({*string_key, *c});
-        if (!pair.second) {
+        if (value->IsUndefined() || value->IsNull()) {
           self->property_map->erase(*string_key);
-          self->property_map->insert({*string_key, *c});
+		  info.GetReturnValue().Set(NULL);
+          data_length = 0;
+        }
+        else {
+          auto pair = self->property_map->insert({ *string_key, *c });
+          if (!pair.second) {
+            self->property_map->erase(*string_key);
+            self->property_map->insert({ *string_key, *c });
+          }
         }
         break;
       } catch(std::length_error) {
@@ -234,7 +241,7 @@ NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
   // If the map doesn't have it, let v8 continue the search.
   auto pair = self->property_map->find<char_string, hasher, s_equal_to>
     (*src, hasher(), s_equal_to());
-  
+
   if (pair == self->property_map->end())
     return;
   Cell *c = &pair->second;
@@ -314,7 +321,7 @@ NAN_METHOD(SharedMap::Create) {
   }
 
   try {
-    d->map_seg = new bip::managed_mapped_file(bip::create_only,string(*filename).c_str(), file_size);
+    d->map_seg = new bip::managed_mapped_file(bip::open_or_create,string(*filename).c_str(), file_size);
     d->property_map = d->map_seg->find_or_construct<PropertyHash>("properties")
       (initial_bucket_count, hasher(), s_equal_to(), d->map_seg->get_segment_manager());
   } catch(bip::interprocess_exception &ex){
@@ -323,7 +330,7 @@ NAN_METHOD(SharedMap::Create) {
     Nan::ThrowError(error_stream.str().c_str());
     return;
   }
-  
+
   d->readonly = false;
   d->closed = false;
   d->setFilename(*filename);

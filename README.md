@@ -47,6 +47,7 @@ shared_object.new_property = 'some other value'
 
 shared_object.close()
 
+
 // Read a file
 const Shared = require('mmap-object')
 
@@ -54,7 +55,11 @@ const shared_object = new Shared.Open('filename')
 
 console.log(`My value is ${shared_object.new_key}`)
 
+
+// Erase a key
+shared_object['new_key'] = null;
 ```
+
 
 ## API
 

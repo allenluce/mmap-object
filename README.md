@@ -55,11 +55,9 @@ const shared_object = new Shared.Open('filename')
 
 console.log(`My value is ${shared_object.new_key}`)
 
-
 // Erase a key
-shared_object['new_key'] = null;
+delete shared_object['new_key']
 ```
-
 
 ## API
 
@@ -124,18 +122,6 @@ __Example__
 obj.close()
 ```
 
-### keys()
-Get all keys of object as array.
-
-__Example__
-
-```js
-// Open up that shared file
-obj.keys().forEach(function (key) {
-    console.log(key + '=' + obj[key]);
-})
-```
-
 ### isOpen()
 
 Return true if this object is currently open.
@@ -173,10 +159,6 @@ The current maximum load factor
     npm test
 
 ## Limitations
-
-[the `in` operator](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/in)
-is slow. Use [`keys` method](https://developer.mozilla.org/ru/docs/Web/JavaScript/Reference/Global_Objects/Object/keys)
-to iterate.
 
 _It is strongly recommended_ to pass in the number of keys you expect
 to write when creating the object with `Create`.  If you don't do

@@ -116,7 +116,6 @@ private:
   static NAN_METHOD(max_bucket_count);
   static NAN_METHOD(load_factor);
   static NAN_METHOD(max_load_factor);
-  static NAN_METHOD(keys);
   static NAN_PROPERTY_SETTER(PropSetter);
   static NAN_PROPERTY_GETTER(PropGetter);
   static NAN_PROPERTY_QUERY(PropQuery);
@@ -128,6 +127,26 @@ private:
     return my_constructor;
   }
 };
+
+bool isMethod(string name) {
+  string methods[] = {
+    "isClosed",
+    "isOpen",
+    "close",
+    "valueOf",
+    "toString",
+    "close",
+    "get_free_memory",
+    "get_size",
+    "bucket_count",
+    "max_bucket_count",
+    "load_factor",
+    "max_load_factor"
+  };
+  set<string> method_set(methods, methods + sizeof(methods) / sizeof(methods[0]));
+
+  return method_set.find(name) != method_set.end();
+}
 
 const char *Cell::c_str() {
   if (type() != STRING_TYPE)
@@ -187,7 +206,7 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
         } else if (value->IsNumber()) {
           data_length += sizeof(double);
           c = new Cell(Nan::To<double>(value).FromJust());
-        } else if (!(value->IsUndefined() || value->IsNull())) {
+        } else {
           Nan::ThrowError("Value must be a string or number.");
           return;
         }
@@ -197,20 +216,13 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
         shared_string *string_key;
         char_allocator allocer(self->map_seg->get_segment_manager());
         string_key = new shared_string(string(*prop).c_str(), allocer);
-        if (value->IsUndefined() || value->IsNull()) {
+        auto pair = self->property_map->insert({ *string_key, *c });
+        if (!pair.second) {
           self->property_map->erase(*string_key);
-      info.GetReturnValue().Set(NULL);
-          data_length = 0;
-        }
-        else {
-          auto pair = self->property_map->insert({ *string_key, *c });
-          if (!pair.second) {
-            self->property_map->erase(*string_key);
-            self->property_map->insert({ *string_key, *c });
-          }
+          self->property_map->insert({ *string_key, *c });
         }
         break;
-      } catch(std::length_error) {
+      } catch(length_error) {
         self->grow(data_length * 2);
       } catch(bip::bad_alloc) {
         self->grow(data_length * 2);
@@ -226,13 +238,7 @@ NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
   v8::String::Utf8Value src(property);
   if (string(*data) == "prototype")
     return;
-  if (string(*src) == "isClosed")
-    return;
-  if (string(*src) == "isOpen")
-    return;
-  if (string(*src) == "valueOf")
-    return;
-  if (string(*src) == "toString")
+  if (isMethod(string(*src)))
     return;
 
   auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
@@ -259,47 +265,40 @@ NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
 NAN_PROPERTY_QUERY(SharedMap::PropQuery) {
   v8::String::Utf8Value data(info.Data());
   v8::String::Utf8Value src(property);
-  if (string(*data) == "prototype" ||
-    string(*src) == "isClosed" ||
-    string(*src) == "isOpen" ||
-    string(*src) == "valueOf" ||
-    string(*src) == "toString" ||
-	string(*src) == "keys") {
-    info.GetReturnValue().Set(v8::Handle<v8::Integer>());
+
+  if (isMethod(string(*src))) {
+    info.GetReturnValue().Set(Nan::New<v8::Integer>(v8::ReadOnly | v8::DontEnum | v8::DontDelete));
     return;
   }
-
   auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
 
-  if (self->closed) {
-    Nan::ThrowError("Cannot query from closed object.");
+  if (self->readonly) {
+    info.GetReturnValue().Set(Nan::New<v8::Integer>(v8::ReadOnly | v8::DontDelete));
     return;
   }
-
-  if (property->IsSymbol()) {
-    Nan::ThrowError("Symbol properties are not supported.");
-    return;
-  }
-
-  // If the map doesn't have it, let v8 continue the search.
-  auto pair = self->property_map->find<char_string, hasher, s_equal_to>
-    (*src, hasher(), s_equal_to());
-
-  if (pair == self->property_map->end()) {
-    info.GetReturnValue().Set(v8::Handle<v8::Integer>());
-    return;
-  }
+    
   info.GetReturnValue().Set(Nan::New<v8::Integer>(v8::None));
 }
 
 NAN_PROPERTY_DELETER(SharedMap::PropDeleter) {
   v8::String::Utf8Value data(info.Data());
+
+  if (property->IsSymbol()) {
+    Nan::ThrowError("Symbol properties are not supported for delete.");
+    return;
+  }
+  
   v8::String::Utf8Value src(property);
 
+  if (isMethod(string(*src))) {
+    info.GetReturnValue().Set(Nan::New<v8::Boolean>(v8::None));
+    return;
+  }
+  
   auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
 
   if (self->readonly) {
-    Nan::ThrowError("Read-only object.");
+    info.GetReturnValue().Set(Nan::New<v8::Boolean>(v8::None));
     return;
   }
 
@@ -308,19 +307,11 @@ NAN_PROPERTY_DELETER(SharedMap::PropDeleter) {
     return;
   }
 
-  if (property->IsSymbol()) {
-    Nan::ThrowError("Symbol properties are not supported.");
-    return;
-  }
-
   v8::String::Utf8Value prop(property);
   shared_string *string_key;
   char_allocator allocer(self->map_seg->get_segment_manager());
   string_key = new shared_string(string(*prop).c_str(), allocer);
   self->property_map->erase(*string_key);
-  //info.GetReturnValue().Set(NULL);
-
-  //info.GetReturnValue().Set(Nan::New<v8::Boolean>(v8::True));
 }
 
 NAN_PROPERTY_ENUMERATOR(SharedMap::PropEnumerator) {
@@ -458,25 +449,6 @@ NAN_METHOD(SharedMap::Open) {
   info.GetReturnValue().Set(info.This());
 }
 
-/*
-	Object.keys() method
-*/
-NAN_METHOD(SharedMap::keys) {
-	v8::Local<v8::Array> arr = Nan::New<v8::Array>();
-	auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
-
-	if (self->closed) {
-		Nan::ThrowError("Cannot read closed object.");
-		return;
-	}
-
-	int i = 0;
-	for (auto it = self->property_map->begin(); it != self->property_map->end(); ++it) {
-		arr->Set(i++, Nan::New<v8::String>(it->first.c_str()).ToLocalChecked());
-	}
-	info.GetReturnValue().Set(arr);
-}
-
 void SharedMap::setFilename(string fn_string) {
   file_name = fn_string;
 }
@@ -524,7 +496,6 @@ v8::Local<v8::Function> SharedMap::init_methods(v8::Local<v8::FunctionTemplate> 
   Nan::SetPrototypeMethod(f_tpl, "max_bucket_count", max_bucket_count);
   Nan::SetPrototypeMethod(f_tpl, "load_factor", load_factor);
   Nan::SetPrototypeMethod(f_tpl, "max_load_factor", max_load_factor);
-  Nan::SetPrototypeMethod(f_tpl, "keys", keys);
 
   auto proto = f_tpl->PrototypeTemplate();
   Nan::SetNamedPropertyHandler(proto, PropGetter, PropSetter, PropQuery, PropDeleter, PropEnumerator,

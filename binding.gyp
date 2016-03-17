@@ -35,6 +35,12 @@
         "GCC_ENABLE_CPP_RTTI": "-frtti"
       },
       "msvs_settings": {
+        "VCCLCompilerTool": {
+            "ExceptionHandling": 1,
+            "AdditionalOptions": [
+                "/EHsc"
+            ]
+        },
         "VCLinkerTool": {
           "AdditionalLibraryDirectories": [
             "<!(echo %BOOST_ROOT%/stage/lib)"

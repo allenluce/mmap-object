@@ -33,6 +33,7 @@ typedef bip::basic_string<char, char_traits<char>> char_string;
 #define UNINITIALIZED 0
 #define STRING_TYPE 1
 #define NUMBER_TYPE 2
+#define OBJECT_TYPE 3
 class WrongPropertyType: public exception {};
 class FileTooLarge: public exception {};
 
@@ -51,7 +52,7 @@ private:
   Cell(Cell&&) = default;
   Cell& operator=(Cell&&) & = default;
 public:
-  Cell(const char *value, char_allocator allocator) : cell_type(STRING_TYPE), cell_value(value, allocator) {}
+  Cell(const char *value, char_allocator allocator, int type) : cell_type(type), cell_value(value, allocator) {}
   Cell(const double value) : cell_type(NUMBER_TYPE), cell_value(value) {}
   Cell(const Cell &cell);
   char type() { return cell_type; }
@@ -105,6 +106,11 @@ private:
   bool closed;
   void grow(size_t);
   void setFilename(string);
+  bool _fnConnected;
+  v8::Local<v8::Object> JSON;
+  v8::Local<v8::Function> stringify;
+  v8::Local<v8::Function> parse;
+  void connectNodejsFunctions(Nan::NAN_PROPERTY_GETTER_ARGS_TYPE info);
   static NAN_METHOD(Create);
   static NAN_METHOD(Open);
   static NAN_METHOD(Close);
@@ -122,6 +128,10 @@ private:
   static NAN_PROPERTY_QUERY(PropQuery);
   static NAN_PROPERTY_ENUMERATOR(PropEnumerator);
   static NAN_PROPERTY_DELETER(PropDeleter);
+  static NAN_INDEX_GETTER(IndexGetter);
+  static NAN_INDEX_SETTER(IndexSetter);
+  static NAN_INDEX_DELETER(IndexDeleter);
+  static NAN_INDEX_QUERY(IndexQuery);
   static v8::Local<v8::Function> init_methods(v8::Local<v8::FunctionTemplate> f_tpl);
   static inline Nan::Persistent<v8::Function> & constructor() {
     static Nan::Persistent<v8::Function> my_constructor;
@@ -130,13 +140,13 @@ private:
 };
 
 const char *Cell::c_str() {
-  if (type() != STRING_TYPE)
+  if (type() != STRING_TYPE && type() != OBJECT_TYPE)
     throw WrongPropertyType();
  return cell_value.string_value.c_str();
 }
 
 Cell::operator string() {
-  if (type() != STRING_TYPE)
+  if (type() != STRING_TYPE && type() != OBJECT_TYPE)
     throw WrongPropertyType();
   return cell_value.string_value.c_str();
 }
@@ -149,7 +159,7 @@ Cell::operator double() {
 
 Cell::Cell(const Cell &cell) {
   cell_type = cell.cell_type;
-  if (cell.cell_type == STRING_TYPE) {
+  if (cell.cell_type == STRING_TYPE || cell.cell_type == OBJECT_TYPE) {
     new (&cell_value.string_value)(shared_string)(cell.cell_value.string_value, cell.cell_value.string_value.get_allocator());
   } else { // is a number type
     cell_value.number_value = cell.cell_value.number_value;
@@ -179,11 +189,19 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
     Cell *c;
     while(true) {
       try {
-        if (value->IsString()) {
+        if (value->IsObject() || value->IsArray()) {
+          self->connectNodejsFunctions(info);
+          v8::Local<v8::Value> args[] = { value };
+          v8::Local<v8::String> result = v8::Local<v8::String>::Cast(self->stringify->Call(self->JSON, 1, args));
+          v8::String::Utf8Value data(result);
+          data_length += data.length();
+          char_allocator allocer(self->map_seg->get_segment_manager());
+          c = new Cell(string(*data).c_str(), allocer, OBJECT_TYPE);
+        } else if (value->IsString()) {
           v8::String::Utf8Value data(value);
           data_length += data.length();
           char_allocator allocer(self->map_seg->get_segment_manager());
-          c = new Cell(string(*data).c_str(), allocer);
+          c = new Cell(string(*data).c_str(), allocer, STRING_TYPE);
         } else if (value->IsNumber()) {
           data_length += sizeof(double);
           c = new Cell(Nan::To<double>(value).FromJust());
@@ -234,6 +252,8 @@ NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
     return;
   if (string(*src) == "toString")
     return;
+  if (string(*src) == "keys")
+    return;
 
   auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
 
@@ -249,7 +269,12 @@ NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
   if (pair == self->property_map->end())
     return;
   Cell *c = &pair->second;
-  if (c->type() == STRING_TYPE) {
+  if (c->type() == OBJECT_TYPE) {
+    self->connectNodejsFunctions(info);
+    v8::Local<v8::Value> args[] = { Nan::New<v8::String>(c->c_str()).ToLocalChecked() };
+    v8::Local<v8::Object> result = v8::Local<v8::Object>::Cast(self->parse->Call(self->JSON, 1, args));
+    info.GetReturnValue().Set(result);
+  } else if (c->type() == STRING_TYPE) {
     info.GetReturnValue().Set(Nan::New<v8::String>(c->c_str()).ToLocalChecked());
   } else if (c->type() == NUMBER_TYPE) {
     info.GetReturnValue().Set((double)*c);
@@ -264,7 +289,7 @@ NAN_PROPERTY_QUERY(SharedMap::PropQuery) {
     string(*src) == "isOpen" ||
     string(*src) == "valueOf" ||
     string(*src) == "toString" ||
-	string(*src) == "keys") {
+  string(*src) == "keys") {
     info.GetReturnValue().Set(v8::Handle<v8::Integer>());
     return;
   }
@@ -334,25 +359,37 @@ NAN_PROPERTY_ENUMERATOR(SharedMap::PropEnumerator) {
 
   int i = 0;
   for (auto it = self->property_map->begin(); it != self->property_map->end(); ++it) {
-	  arr->Set(i++, Nan::New<v8::String>(it->first.c_str()).ToLocalChecked());
+    arr->Set(i++, Nan::New<v8::String>(it->first.c_str()).ToLocalChecked());
   }
   info.GetReturnValue().Set(arr);
 }
 
-NAN_INDEX_GETTER(IndexGetter) {
-  Nan::ThrowError("Shared object is not indexable.");
+NAN_INDEX_GETTER(SharedMap::IndexGetter) {
+  // Nan::ThrowError("Shared object is not indexable.");
+  auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
+  v8::Local<v8::String> property = v8::Local<v8::String>::Cast(Nan::New<v8::Int32>(index));
+  return self->PropGetter(property, info);
 }
 
-NAN_INDEX_SETTER(IndexSetter) {
-  Nan::ThrowError("Shared object is not indexable.");
+NAN_INDEX_SETTER(SharedMap::IndexSetter) {
+  //Nan::ThrowError("Shared object is not indexable.");
+  auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
+  v8::Local<v8::String> property = v8::Local<v8::String>::Cast(Nan::New<v8::Int32>(index));
+  return self->PropSetter(property, value, info);
 }
 
-NAN_INDEX_QUERY(IndexQuery) {
-  Nan::ThrowError("Shared object is not indexable.");
+NAN_INDEX_QUERY(SharedMap::IndexQuery) {
+  // Nan::ThrowError("Shared object is not indexable.");
+  auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
+  v8::Local<v8::String> property = v8::Local<v8::String>::Cast(Nan::New<v8::Int32>(index));
+  return self->PropQuery(property, info);
 }
 
-NAN_INDEX_DELETER(IndexDeleter) {
-  Nan::ThrowError("Shared object is not indexable.");
+NAN_INDEX_DELETER(SharedMap::IndexDeleter) {
+  // Nan::ThrowError("Shared object is not indexable.");
+  auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
+  v8::Local<v8::String> property = v8::Local<v8::String>::Cast(Nan::New<v8::Int32>(index));
+  return self->PropDeleter(property, info);
 }
 
 NAN_INDEX_ENUMERATOR(IndexEnumerator) {}
@@ -398,6 +435,8 @@ NAN_METHOD(SharedMap::Create) {
     initial_bucket_count = 1024;
   }
 
+  //d->connectNodejsFunctions(info);
+
   try {
     d->map_seg = new bip::managed_mapped_file(bip::open_or_create,string(*filename).c_str(), file_size);
     d->property_map = d->map_seg->find_or_construct<PropertyHash>("properties")
@@ -414,6 +453,7 @@ NAN_METHOD(SharedMap::Create) {
   d->setFilename(*filename);
   d->file_size = file_size;
   d->max_file_size = max_file_size;
+  d->_fnConnected = false;
   d->Wrap(info.This());
   info.GetReturnValue().Set(info.This());
 }
@@ -441,6 +481,8 @@ NAN_METHOD(SharedMap::Open) {
     return;
   }
 
+  //d->connectNodejsFunctions(info);
+
   try {
     d->map_seg = new bip::managed_mapped_file(bip::open_read_only, string(*filename).c_str());
     auto find_map = d->map_seg->find<PropertyHash>("properties");
@@ -454,27 +496,28 @@ NAN_METHOD(SharedMap::Open) {
   d->readonly = true;
   d->closed = false;
   d->setFilename(*filename);
+  d->_fnConnected = false;
   d->Wrap(info.This());
   info.GetReturnValue().Set(info.This());
 }
 
 /*
-	Object.keys() method
+  Object.keys() method
 */
 NAN_METHOD(SharedMap::keys) {
-	v8::Local<v8::Array> arr = Nan::New<v8::Array>();
-	auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
+  v8::Local<v8::Array> arr = Nan::New<v8::Array>();
+  auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
 
-	if (self->closed) {
-		Nan::ThrowError("Cannot read closed object.");
-		return;
-	}
+  if (self->closed) {
+    Nan::ThrowError("Cannot read closed object.");
+    return;
+  }
 
-	int i = 0;
-	for (auto it = self->property_map->begin(); it != self->property_map->end(); ++it) {
-		arr->Set(i++, Nan::New<v8::String>(it->first.c_str()).ToLocalChecked());
-	}
-	info.GetReturnValue().Set(arr);
+  int i = 0;
+  for (auto it = self->property_map->begin(); it != self->property_map->end(); ++it) {
+    arr->Set(i++, Nan::New<v8::String>(it->first.c_str()).ToLocalChecked());
+  }
+  info.GetReturnValue().Set(arr);
 }
 
 void SharedMap::setFilename(string fn_string) {
@@ -540,6 +583,16 @@ v8::Local<v8::Function> SharedMap::init_methods(v8::Local<v8::FunctionTemplate> 
   auto fun = Nan::GetFunction(f_tpl).ToLocalChecked();
   constructor().Reset(fun);
   return fun;
+}
+
+void SharedMap::connectNodejsFunctions(Nan::NAN_PROPERTY_GETTER_ARGS_TYPE info) {
+  v8::Local<v8::Object> global = info.GetIsolate()->GetCurrentContext()->Global();
+  this->JSON = v8::Local<v8::Object>::Cast(
+    global->Get(Nan::New<v8::String>("JSON").ToLocalChecked()));
+  this->stringify = v8::Local<v8::Function>::Cast(
+    this->JSON->Get(Nan::New<v8::String>("stringify").ToLocalChecked()));
+  this->parse = v8::Local<v8::Function>::Cast(
+    this->JSON->Get(Nan::New<v8::String>("parse").ToLocalChecked()));
 }
 
 NAN_MODULE_INIT(SharedMap::Init) {

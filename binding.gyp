@@ -14,6 +14,15 @@
       "-Wno-unused-local-typedefs"
     ]
   },
+  "conditions": [
+      ["OS=='win'", {
+        "variables": {
+          "include_dirs": [
+            "<!(echo %BOOST_ROOT%)"
+          ]
+        }
+      }],
+    ],
   "targets": [
     {
       "target_name": "<(module_name)",
@@ -24,6 +33,13 @@
         "OTHER_CFLAGS": [ "<@(OTHER_CFLAGS)" ],
         "GCC_ENABLE_CPP_EXCEPTIONS": "YES",
         "GCC_ENABLE_CPP_RTTI": "-frtti"
+      },
+      "msvs_settings": {
+        "VCLinkerTool": {
+          "AdditionalLibraryDirectories": [
+            "<!(echo %BOOST_ROOT%/stage/lib)"
+          ]
+        }
       }
     },
     {

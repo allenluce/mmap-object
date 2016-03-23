@@ -21,21 +21,13 @@
   "gypfile": true,
   "dependencies": {
     "nan": "^2.2.0",
-    "node-pre-gyp": "^0.6.21",
-    "node-pre-gyp-github": "^1.1.2"
+    "node-pre-gyp": "^0.6.21"
   },
   "devDependencies": {
-    "aws-sdk": "^2.2.37",
     "chai": "^3.5.0",
-    "cz-conventional-changelog": "^1.1.5",
     "mocha": "^2.4.5",
-    "node-gyp": "^3.2.1",
+    "node-pre-gyp-github": "^1.1.2",
     "temp": "^0.8.3",
     "which": "^1.2.4"
-  },
-  "config": {
-    "commitizen": {
-      "path": "./node_modules/cz-conventional-changelog"
-    }
   }
 }

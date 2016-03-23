@@ -9,6 +9,14 @@
 #define DEFAULT_FILE_SIZE 5ul<<20 // 5 megs
 #define DEFAULT_MAX_SIZE 5000ul<<20 // 5000 megs
 
+#ifndef S_ISDIR
+#define S_ISDIR(mode)  (((mode) & S_IFMT) == S_IFDIR)
+#endif
+
+#ifndef S_ISREG
+#define S_ISREG(mode)  (((mode) & S_IFMT) == S_IFREG)
+#endif
+
 namespace bip=boost::interprocess;
 using namespace std;
 
@@ -75,7 +83,7 @@ public:
     return boost::hash<char_string>()(key);
   }
 };
-  
+
 typedef boost::unordered_map<
   KeyType,
   ValueType,
@@ -110,12 +118,35 @@ private:
   static NAN_METHOD(max_load_factor);
   static NAN_PROPERTY_SETTER(PropSetter);
   static NAN_PROPERTY_GETTER(PropGetter);
+  static NAN_PROPERTY_QUERY(PropQuery);
+  static NAN_PROPERTY_ENUMERATOR(PropEnumerator);
+  static NAN_PROPERTY_DELETER(PropDeleter);
   static v8::Local<v8::Function> init_methods(v8::Local<v8::FunctionTemplate> f_tpl);
   static inline Nan::Persistent<v8::Function> & constructor() {
     static Nan::Persistent<v8::Function> my_constructor;
     return my_constructor;
   }
 };
+
+bool isMethod(string name) {
+  string methods[] = {
+    "isClosed",
+    "isOpen",
+    "close",
+    "valueOf",
+    "toString",
+    "close",
+    "get_free_memory",
+    "get_size",
+    "bucket_count",
+    "max_bucket_count",
+    "load_factor",
+    "max_load_factor"
+  };
+  set<string> method_set(methods, methods + sizeof(methods) / sizeof(methods[0]));
+
+  return method_set.find(name) != method_set.end();
+}
 
 const char *Cell::c_str() {
   if (type() != STRING_TYPE)
@@ -160,7 +191,7 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
     Nan::ThrowError("Symbol properties are not supported.");
     return;
   }
-  
+
   size_t data_length = sizeof(Cell);
 
   try {
@@ -179,19 +210,19 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
           Nan::ThrowError("Value must be a string or number.");
           return;
         }
-        
+
         v8::String::Utf8Value prop(property);
         data_length += prop.length();
         shared_string *string_key;
         char_allocator allocer(self->map_seg->get_segment_manager());
         string_key = new shared_string(string(*prop).c_str(), allocer);
-        auto pair = self->property_map->insert({*string_key, *c});
+        auto pair = self->property_map->insert({ *string_key, *c });
         if (!pair.second) {
           self->property_map->erase(*string_key);
-          self->property_map->insert({*string_key, *c});
+          self->property_map->insert({ *string_key, *c });
         }
         break;
-      } catch(std::length_error) {
+      } catch(length_error) {
         self->grow(data_length * 2);
       } catch(bip::bad_alloc) {
         self->grow(data_length * 2);
@@ -207,13 +238,7 @@ NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
   v8::String::Utf8Value src(property);
   if (string(*data) == "prototype")
     return;
-  if (string(*src) == "isClosed")
-    return;
-  if (string(*src) == "isOpen")
-    return;
-  if (string(*src) == "valueOf")
-    return;
-  if (string(*src) == "toString")
+  if (isMethod(string(*src)))
     return;
 
   auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
@@ -226,7 +251,7 @@ NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
   // If the map doesn't have it, let v8 continue the search.
   auto pair = self->property_map->find<char_string, hasher, s_equal_to>
     (*src, hasher(), s_equal_to());
-  
+
   if (pair == self->property_map->end())
     return;
   Cell *c = &pair->second;
@@ -237,12 +262,71 @@ NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
   }
 }
 
-NAN_PROPERTY_QUERY(PropQuery) {}
-NAN_PROPERTY_DELETER(PropDeleter) {}
+NAN_PROPERTY_QUERY(SharedMap::PropQuery) {
+  v8::String::Utf8Value data(info.Data());
+  v8::String::Utf8Value src(property);
 
-NAN_PROPERTY_ENUMERATOR(PropEnumerator) {
+  if (isMethod(string(*src))) {
+    info.GetReturnValue().Set(Nan::New<v8::Integer>(v8::ReadOnly | v8::DontEnum | v8::DontDelete));
+    return;
+  }
+  auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
+
+  if (self->readonly) {
+    info.GetReturnValue().Set(Nan::New<v8::Integer>(v8::ReadOnly | v8::DontDelete));
+    return;
+  }
+    
+  info.GetReturnValue().Set(Nan::New<v8::Integer>(v8::None));
+}
+
+NAN_PROPERTY_DELETER(SharedMap::PropDeleter) {
+  v8::String::Utf8Value data(info.Data());
+
+  if (property->IsSymbol()) {
+    Nan::ThrowError("Symbol properties are not supported for delete.");
+    return;
+  }
+  
+  v8::String::Utf8Value src(property);
+
+  if (isMethod(string(*src))) {
+    info.GetReturnValue().Set(Nan::New<v8::Boolean>(v8::None));
+    return;
+  }
+  
+  auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
+
+  if (self->readonly) {
+    info.GetReturnValue().Set(Nan::New<v8::Boolean>(v8::None));
+    return;
+  }
+
+  if (self->closed) {
+    Nan::ThrowError("Cannot delete from closed object.");
+    return;
+  }
+
+  v8::String::Utf8Value prop(property);
+  shared_string *string_key;
+  char_allocator allocer(self->map_seg->get_segment_manager());
+  string_key = new shared_string(string(*prop).c_str(), allocer);
+  self->property_map->erase(*string_key);
+}
+
+NAN_PROPERTY_ENUMERATOR(SharedMap::PropEnumerator) {
   v8::Local<v8::Array> arr = Nan::New<v8::Array>();
-  Nan::Set(arr, 0, Nan::New("value").ToLocalChecked());
+  auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
+
+  if (self->closed) {
+    Nan::ThrowError("Cannot read from closed object.");
+    return;
+  }
+
+  int i = 0;
+  for (auto it = self->property_map->begin(); it != self->property_map->end(); ++it) {
+	  arr->Set(i++, Nan::New<v8::String>(it->first.c_str()).ToLocalChecked());
+  }
   info.GetReturnValue().Set(arr);
 }
 
@@ -306,7 +390,7 @@ NAN_METHOD(SharedMap::Create) {
   }
 
   try {
-    d->map_seg = new bip::managed_mapped_file(bip::create_only,string(*filename).c_str(), file_size);
+    d->map_seg = new bip::managed_mapped_file(bip::open_or_create,string(*filename).c_str(), file_size);
     d->property_map = d->map_seg->find_or_construct<PropertyHash>("properties")
       (initial_bucket_count, hasher(), s_equal_to(), d->map_seg->get_segment_manager());
   } catch(bip::interprocess_exception &ex){
@@ -315,7 +399,7 @@ NAN_METHOD(SharedMap::Create) {
     Nan::ThrowError(error_stream.str().c_str());
     return;
   }
-  
+
   d->readonly = false;
   d->closed = false;
   d->setFilename(*filename);

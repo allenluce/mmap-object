@@ -2,3 +2,4 @@ build/
 lib/
 node_modules/
 *~
+lib/mmap-object.node

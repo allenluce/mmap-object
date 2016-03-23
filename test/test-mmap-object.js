@@ -10,13 +10,20 @@ const child_process = require('child_process')
 const fs = require('fs')
 const which = require('which')
 
-describe('Datum', function () {
+const BigKeySize = 1000
+const BiggerKeySize = 10000
+
+const methods = ['isClosed', 'isOpen', 'close', 'valueOf', 'toString',
+                 'close', 'get_free_memory', 'get_size', 'bucket_count',
+                 'max_bucket_count', 'load_factor', 'max_load_factor']
+
+describe('mmap-object', function () {
   before(function () {
     temp.track()
     this.dir = temp.mkdirSync('node-shared')
   })
 
-  describe('Creator', function () {
+  describe('Writer', function () {
     beforeEach(function () {
       this.shobj = new MmapObject.Create(path.join(this.dir, this.currentTest.title))
     })
@@ -36,7 +43,11 @@ describe('Datum', function () {
     it('sets properties to a string', function () {
       this.shobj.my_string_property = 'my value'
       this.shobj['some other property'] = 'some other value'
-      this.shobj['one more property'] = new Array(1000).join('A bunch of strings')
+      this.shobj['one more property'] = new Array(BigKeySize).join('A bunch of strings')
+      expect(this.shobj.my_string_property).to.equal('my value')
+      expect(this.shobj.my_string_property).to.equal('my value')
+      expect(this.shobj['some other property']).to.equal('some other value')
+      expect(this.shobj['one more property']).to.equal(new Array(BigKeySize).join('A bunch of strings'))
     })
 
     it('sets properties to a number', function () {
@@ -44,6 +55,26 @@ describe('Datum', function () {
       expect(this.shobj.my_number_property).to.equal(12)
       this.shobj['some other number property'] = 0.2
       expect(this.shobj['some other number property']).to.equal(0.2)
+    })
+
+    it('can delete properties', function () {
+      this.shobj.should_be_deleted = 'please delete me'
+      expect(this.shobj.should_be_deleted).to.equal('please delete me')
+      expect(delete this.shobj.should_be_deleted).to.be.true
+      expect(this.shobj.should_be_deleted).to.be.undefined
+    })
+
+    it('has enumerable and writable properties', function () {
+      this.shobj.akey = 'avalue'
+      expect(this.shobj.propertyIsEnumerable('akey')).to.be.true
+      expect(Object.getOwnPropertyDescriptor(this.shobj, 'akey').writable).to.be.true
+    })
+
+    it('has un-enumerable and read-only methods', function () {
+      for (let method of methods) {
+        expect(this.shobj.propertyIsEnumerable(method), `${method} is enumerable`).to.be.false
+        expect(delete this.shobj[method], `${method} is writable`).to.be.false
+      }
     })
 
     it('gets a property', function () {
@@ -55,7 +86,7 @@ describe('Datum', function () {
       expect(this.shobj.noother_property).to.be.undefined
     })
 
-    it('write after close gives exception', function () {
+    it('throws when writing after close', function () {
       const obj = new MmapObject.Create(path.join(this.dir, 'closetest'))
       obj['first'] = 'value'
       expect(obj.isClosed()).to.be.false
@@ -68,10 +99,28 @@ describe('Datum', function () {
       }).to.throw(/Cannot write to closed object./)
     })
 
-    it('bombs on write to symbol property', function () {
-      const shobj = this.shobj
+    it('throws when deleting after close', function () {
+      const obj = new MmapObject.Create(path.join(this.dir, 'closetest'))
+      obj['first'] = 'value'
+      expect(obj.isClosed()).to.be.false
+      expect(obj.isOpen()).to.be.true
+      obj.close()
+      expect(obj.isClosed()).to.be.true
+      expect(obj.isOpen()).to.be.false
       expect(function () {
-        shobj[Symbol('first')] = 'what'
+        delete obj.first
+      }).to.throw(/Cannot delete from closed object./)
+    })
+
+    it('throws when attempting to delete symbol', function () {
+      expect(() => {
+        delete this.shobj[Symbol('first')]
+      }).to.throw(/Symbol properties are not supported for delete./)
+    })
+
+    it('bombs on write to symbol property', function () {
+      expect(() => {
+        this.shobj[Symbol('first')] = 'what'
       }).to.throw(/Symbol properties are not supported./)
     })
 
@@ -79,16 +128,16 @@ describe('Datum', function () {
       const filename = path.join(this.dir, 'grow_me')
       const smallobj = new MmapObject.Create(filename, 500)
       expect(fs.statSync(filename)['size']).to.equal(500)
-      smallobj['key'] = new Array(1000).join('big')
+      smallobj['key'] = new Array(BigKeySize).join('big')
       expect(fs.statSync(filename)['size']).to.above(500)
     })
 
     it('bombs when file gets too big', function () {
       const filename = path.join(this.dir, 'bomb_me')
       const smallobj = new MmapObject.Create(filename, 500, 4, 20000)
-      smallobj['key'] = new Array(1000).join('big')
+      smallobj['key'] = new Array(BigKeySize).join('big')
       expect(function () {
-        smallobj['otherkey'] = new Array(1000).join('big')
+        smallobj['otherkey'] = new Array(BigKeySize).join('big')
       }).to.throw(/File grew too large./)
     })
   })
@@ -100,7 +149,7 @@ describe('Datum', function () {
 
     it('get_free_memory', function () {
       const initial = this.obj.get_free_memory()
-      this.obj.gfm = new Array(1000).join('Data')
+      this.obj.gfm = new Array(BigKeySize).join('Data')
       const final = this.obj.get_free_memory()
       expect(initial - final).to.be.above(12432)
     })
@@ -144,14 +193,15 @@ describe('Datum', function () {
       const writer = new MmapObject.Create(this.testfile)
       writer['first'] = 'value for first'
       writer['second'] = 0.207879576
-      const bigKey = new Array(1000).join('fourty-nine thousand nine hundred fifty bytes long')
-      writer[bigKey] = new Array(10000).join('six hundred seventy nine thousand nine hundred thirty two bytes long')
+      this.bigKey = new Array(BigKeySize).join('fourty-nine thousand nine hundred fifty bytes long')
+      writer[this.bigKey] = new Array(BiggerKeySize).join('six hundred seventy nine thousand nine hundred thirty two bytes long')
       writer['samekey'] = 'first value'
       writer['samekey'] = writer['samekey'] + ' and a new value too'
+      writer.should_be_deleted = 'I should not exist!'
+      delete writer.should_be_deleted
       writer.close()
       this.reader = new MmapObject.Open(this.testfile)
     })
-
     it('must be called as a constructor', function () {
       const testfile = this.testfile
       expect(function () {
@@ -206,6 +256,22 @@ describe('Datum', function () {
 
     it('can get stored strings', function () {
       expect(this.reader.first).to.equal('value for first')
+    })
+
+    it('can get keys', function () {
+      expect(this.reader).to.have.keys(['first', 'second', this.bigKey, 'samekey'])
+    })
+
+    it('has enumerable but read-only properties', function () {
+      expect(this.reader.propertyIsEnumerable('first')).to.be.true
+      expect(Object.getOwnPropertyDescriptor(this.reader, 'first').writable).to.be.false
+    })
+
+    it('has un-enumerable and read-only methods', function () {
+      for (let method of methods) {
+        expect(this.reader.propertyIsEnumerable(method), `${method} is enumerable`).to.be.false
+        expect(delete this.reader[method], `${method} is writable`).to.be.false
+      }
     })
 
     it('bombs on bad file', function () {
@@ -269,7 +335,7 @@ describe('Datum', function () {
     it('reads string properties', function () {
       expect(this.oldformat.my_string_property).to.equal('Some old value')
       expect(this.oldformat['some other property']).to.equal('some other old value')
-      expect(this.oldformat['one more property']).to.deep.equal(new Array(1000).join('A giant bunch of strings'))
+      expect(this.oldformat['one more property']).to.deep.equal(new Array(BigKeySize).join('A giant bunch of strings'))
     })
 
     it('reads number properties', function () {

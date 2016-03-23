@@ -113,14 +113,16 @@ describe('mmap-object', function () {
     })
 
     it('throws when attempting to delete symbol', function () {
-      expect(() => {
-        delete this.shobj[Symbol('first')]
+      const self = this
+      expect(function () {
+        delete self.shobj[Symbol('first')]
       }).to.throw(/Symbol properties are not supported for delete./)
     })
 
     it('bombs on write to symbol property', function () {
-      expect(() => {
-        this.shobj[Symbol('first')] = 'what'
+      const self = this
+      expect(function () {
+        self.shobj[Symbol('first')] = 'what'
       }).to.throw(/Symbol properties are not supported./)
     })
 

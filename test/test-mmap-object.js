@@ -8,6 +8,7 @@ const expect = require('chai').expect
 const temp = require('temp')
 const child_process = require('child_process')
 const fs = require('fs')
+const os = require('os')
 const which = require('which')
 
 const BigKeySize = 1000
@@ -326,12 +327,18 @@ describe('mmap-object', function () {
 
   describe('Still can read old format', function () {
     before(function () {
-      const old_format_file = `${__dirname}/previous-format.bin`
-      this.oldformat = new MmapObject.Open(old_format_file)
+      if (os.platform() === 'darwin') {
+        this.skip()
+      } else {
+        const old_format_file = `${__dirname}/previous-format.bin`
+        this.oldformat = new MmapObject.Open(old_format_file)
+      }
     })
 
     after(function () {
-      this.oldformat.close()
+      if (os.platform() !== 'darwin') {
+        this.oldformat.close()
+      }
     })
 
     it('reads string properties', function () {

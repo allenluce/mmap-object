@@ -30,6 +30,18 @@ the releases page to see which). If a binary is not provided for your
 platform, you will need Boost and and a C++11 compliant compiler (like
 GCC 4.8 or better).
 
+#### MSVS build prerequisites
+
+You need at least Visual Studio Community 2015 edition (C++11 compliant) installed.  
+Setup [Boost](http://www.boost.org/):
+
+```
+bootstrap
+b2 --build-type=complete
+```
+
+Set BOOST_ROOT environment variable.
+
 ### Installation
 
     npm install mmap-object
@@ -65,8 +77,9 @@ shared_object['new_key'] = null;
 
 ### new Create(path, [file_size], [initial_bucket_count], [max_file_size])
 
-Creates a new file mapped into shared memory.  Returns an object that
-provides access to the shared memory.  Throws an exception on error.
+Creates a new file mapped into shared memory or opens existing one.  Returns an object that
+provides access to the shared memory.  Throws an exception on error.  
+Note: to modify file size or bucket count of existing file you need to delete file first.
 
 __Arguments__
 
@@ -124,16 +137,17 @@ __Example__
 obj.close()
 ```
 
-### keys()
+### Object.keys()
+
 Get all keys of object as array.
 
 __Example__
 
 ```js
 // Open up that shared file
-obj.keys().forEach(function (key) {
-    console.log(key + '=' + obj[key]);
-})
+Object.keys(obj).forEach(function (key) {
+    console.log(key + '=' + util.inspect(obj[key]));
+});
 ```
 
 ### isOpen()
@@ -184,10 +198,13 @@ this, the object will resize once you fill it up. This can be a very
 time-consuming process and can result in fragmentation within the
 shared memory object and a larger final file size.
 
-Object values may be only string or number values.  Attempting to set
-a different type value results in an exception.
+Object values may be string, number, object or array values.  Attempting to set
+a different type of value results in an exception.
 
 Symbols are not supported as properties.
+
+Note: object values writes takes the whole object atomically, setting up shared object's properties will
+not update stored value.
 
 ## Publishing a binary release
 
@@ -202,12 +219,3 @@ To make a new binary release:
 You will need a `NODE_PRE_GYP_GITHUB_TOKEN` with `repo:status`,
 `repo_deployment` and `public_repo` access to the target repo. You'll
 also need write access to the npm repo.
-
-## MSVS build prerequisites
-
-Setup [Boost](http://www.boost.org/):
-
-bootstrap
-b2 --build-type=complete
-
-Set BOOST_ROOT environment variable.

@@ -52,7 +52,7 @@ private:
   Cell(Cell&&) = default;
   Cell& operator=(Cell&&) & = default;
 public:
-  Cell(const char *value, char_allocator allocator, int type) : cell_type(type), cell_value(value, allocator) {}
+  Cell(const char *value, char_allocator allocator, char type) : cell_type(type), cell_value(value, allocator) {}
   Cell(const double value) : cell_type(NUMBER_TYPE), cell_value(value) {}
   Cell(const Cell &cell);
   char type() { return cell_type; }
@@ -106,11 +106,6 @@ private:
   bool closed;
   void grow(size_t);
   void setFilename(string);
-  bool _fnConnected;
-  v8::Local<v8::Object> JSON;
-  v8::Local<v8::Function> stringify;
-  v8::Local<v8::Function> parse;
-  void connectNodejsFunctions(Nan::NAN_PROPERTY_GETTER_ARGS_TYPE info);
   static NAN_METHOD(Create);
   static NAN_METHOD(Open);
   static NAN_METHOD(Close);
@@ -122,7 +117,6 @@ private:
   static NAN_METHOD(max_bucket_count);
   static NAN_METHOD(load_factor);
   static NAN_METHOD(max_load_factor);
-  static NAN_METHOD(keys);
   static NAN_PROPERTY_SETTER(PropSetter);
   static NAN_PROPERTY_GETTER(PropGetter);
   static NAN_PROPERTY_QUERY(PropQuery);
@@ -190,9 +184,16 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
     while(true) {
       try {
         if (value->IsObject() || value->IsArray()) {
-          self->connectNodejsFunctions(info);
           v8::Local<v8::Value> args[] = { value };
-          v8::Local<v8::String> result = v8::Local<v8::String>::Cast(self->stringify->Call(self->JSON, 1, args));
+
+          v8::Isolate* isolate = info.GetIsolate();
+          v8::Local<v8::Object> global = isolate->GetCurrentContext()->Global();
+          v8::Local<v8::Object> JSON = v8::Local<v8::Object>::Cast(
+            global->Get(Nan::New<v8::String>("JSON").ToLocalChecked()));
+          v8::Local<v8::Function> stringify = v8::Local<v8::Function>::Cast(
+            JSON->Get(Nan::New<v8::String>("stringify").ToLocalChecked()));
+
+          v8::Local<v8::String> result = stringify->Call(JSON, 1, args)->ToString();
           v8::String::Utf8Value data(result);
           data_length += data.length();
           char_allocator allocer(self->map_seg->get_segment_manager());
@@ -217,8 +218,6 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
         string_key = new shared_string(string(*prop).c_str(), allocer);
         if (value->IsUndefined() || value->IsNull()) {
           self->property_map->erase(*string_key);
-      info.GetReturnValue().Set(NULL);
-          data_length = 0;
         }
         else {
           auto pair = self->property_map->insert({ *string_key, *c });
@@ -227,6 +226,7 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
             self->property_map->insert({ *string_key, *c });
           }
         }
+        info.GetReturnValue().Set(value);
         break;
       } catch(std::length_error) {
         self->grow(data_length * 2);
@@ -242,18 +242,13 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
 NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
   v8::String::Utf8Value data(info.Data());
   v8::String::Utf8Value src(property);
-  if (string(*data) == "prototype")
+  if (string(*data) == "prototype" ||
+    string(*src) == "isClosed" ||
+    string(*src) == "isOpen" ||
+    string(*src) == "valueOf" ||
+    string(*src) == "toString") {
     return;
-  if (string(*src) == "isClosed")
-    return;
-  if (string(*src) == "isOpen")
-    return;
-  if (string(*src) == "valueOf")
-    return;
-  if (string(*src) == "toString")
-    return;
-  if (string(*src) == "keys")
-    return;
+  }
 
   auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
 
@@ -270,10 +265,24 @@ NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
     return;
   Cell *c = &pair->second;
   if (c->type() == OBJECT_TYPE) {
-    self->connectNodejsFunctions(info);
     v8::Local<v8::Value> args[] = { Nan::New<v8::String>(c->c_str()).ToLocalChecked() };
-    v8::Local<v8::Object> result = v8::Local<v8::Object>::Cast(self->parse->Call(self->JSON, 1, args));
-    info.GetReturnValue().Set(result);
+
+    v8::Isolate* isolate = info.GetIsolate();
+    v8::Local<v8::Object> global = isolate->GetCurrentContext()->Global();
+    v8::Local<v8::Object> JSON = v8::Local<v8::Object>::Cast(
+      global->Get(Nan::New<v8::String>("JSON").ToLocalChecked()));
+    v8::Local<v8::Function> parse = v8::Local<v8::Function>::Cast(
+      JSON->Get(Nan::New<v8::String>("parse").ToLocalChecked()));
+
+    try {
+      v8::Local<v8::Value> result = parse->Call(JSON, 1, args);
+      info.GetReturnValue().Set(result);
+    }
+    catch (v8::Exception) {
+      // @todo
+      // Nan::ThrowError("Cannot parse object.");
+      // return;
+    }
   } else if (c->type() == STRING_TYPE) {
     info.GetReturnValue().Set(Nan::New<v8::String>(c->c_str()).ToLocalChecked());
   } else if (c->type() == NUMBER_TYPE) {
@@ -288,9 +297,7 @@ NAN_PROPERTY_QUERY(SharedMap::PropQuery) {
     string(*src) == "isClosed" ||
     string(*src) == "isOpen" ||
     string(*src) == "valueOf" ||
-    string(*src) == "toString" ||
-  string(*src) == "keys") {
-    info.GetReturnValue().Set(v8::Handle<v8::Integer>());
+    string(*src) == "toString") {
     return;
   }
 
@@ -311,7 +318,6 @@ NAN_PROPERTY_QUERY(SharedMap::PropQuery) {
     (*src, hasher(), s_equal_to());
 
   if (pair == self->property_map->end()) {
-    info.GetReturnValue().Set(v8::Handle<v8::Integer>());
     return;
   }
   info.GetReturnValue().Set(Nan::New<v8::Integer>(v8::None));
@@ -343,9 +349,7 @@ NAN_PROPERTY_DELETER(SharedMap::PropDeleter) {
   char_allocator allocer(self->map_seg->get_segment_manager());
   string_key = new shared_string(string(*prop).c_str(), allocer);
   self->property_map->erase(*string_key);
-  //info.GetReturnValue().Set(NULL);
-
-  //info.GetReturnValue().Set(Nan::New<v8::Boolean>(v8::True));
+  info.GetReturnValue().Set(true);
 }
 
 NAN_PROPERTY_ENUMERATOR(SharedMap::PropEnumerator) {
@@ -367,28 +371,25 @@ NAN_PROPERTY_ENUMERATOR(SharedMap::PropEnumerator) {
 NAN_INDEX_GETTER(SharedMap::IndexGetter) {
   // Nan::ThrowError("Shared object is not indexable.");
   auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
-  v8::Local<v8::String> property = v8::Local<v8::String>::Cast(Nan::New<v8::Int32>(index));
+  v8::Local<v8::String> property = v8::Local<v8::String>::Cast(Nan::New<v8::Uint32>(index));
   return self->PropGetter(property, info);
 }
 
 NAN_INDEX_SETTER(SharedMap::IndexSetter) {
-  //Nan::ThrowError("Shared object is not indexable.");
   auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
-  v8::Local<v8::String> property = v8::Local<v8::String>::Cast(Nan::New<v8::Int32>(index));
+  v8::Local<v8::String> property = v8::Local<v8::String>::Cast(Nan::New<v8::Uint32>(index));
   return self->PropSetter(property, value, info);
 }
 
 NAN_INDEX_QUERY(SharedMap::IndexQuery) {
-  // Nan::ThrowError("Shared object is not indexable.");
   auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
-  v8::Local<v8::String> property = v8::Local<v8::String>::Cast(Nan::New<v8::Int32>(index));
+  v8::Local<v8::String> property = v8::Local<v8::String>::Cast(Nan::New<v8::Uint32>(index));
   return self->PropQuery(property, info);
 }
 
 NAN_INDEX_DELETER(SharedMap::IndexDeleter) {
-  // Nan::ThrowError("Shared object is not indexable.");
   auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
-  v8::Local<v8::String> property = v8::Local<v8::String>::Cast(Nan::New<v8::Int32>(index));
+  v8::Local<v8::String> property = v8::Local<v8::String>::Cast(Nan::New<v8::Uint32>(index));
   return self->PropDeleter(property, info);
 }
 
@@ -435,8 +436,6 @@ NAN_METHOD(SharedMap::Create) {
     initial_bucket_count = 1024;
   }
 
-  //d->connectNodejsFunctions(info);
-
   try {
     d->map_seg = new bip::managed_mapped_file(bip::open_or_create,string(*filename).c_str(), file_size);
     d->property_map = d->map_seg->find_or_construct<PropertyHash>("properties")
@@ -453,7 +452,6 @@ NAN_METHOD(SharedMap::Create) {
   d->setFilename(*filename);
   d->file_size = file_size;
   d->max_file_size = max_file_size;
-  d->_fnConnected = false;
   d->Wrap(info.This());
   info.GetReturnValue().Set(info.This());
 }
@@ -481,8 +479,6 @@ NAN_METHOD(SharedMap::Open) {
     return;
   }
 
-  //d->connectNodejsFunctions(info);
-
   try {
     d->map_seg = new bip::managed_mapped_file(bip::open_read_only, string(*filename).c_str());
     auto find_map = d->map_seg->find<PropertyHash>("properties");
@@ -496,29 +492,10 @@ NAN_METHOD(SharedMap::Open) {
   d->readonly = true;
   d->closed = false;
   d->setFilename(*filename);
-  d->_fnConnected = false;
   d->Wrap(info.This());
   info.GetReturnValue().Set(info.This());
 }
 
-/*
-  Object.keys() method
-*/
-NAN_METHOD(SharedMap::keys) {
-  v8::Local<v8::Array> arr = Nan::New<v8::Array>();
-  auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
-
-  if (self->closed) {
-    Nan::ThrowError("Cannot read closed object.");
-    return;
-  }
-
-  int i = 0;
-  for (auto it = self->property_map->begin(); it != self->property_map->end(); ++it) {
-    arr->Set(i++, Nan::New<v8::String>(it->first.c_str()).ToLocalChecked());
-  }
-  info.GetReturnValue().Set(arr);
-}
 
 void SharedMap::setFilename(string fn_string) {
   file_name = fn_string;
@@ -567,7 +544,6 @@ v8::Local<v8::Function> SharedMap::init_methods(v8::Local<v8::FunctionTemplate> 
   Nan::SetPrototypeMethod(f_tpl, "max_bucket_count", max_bucket_count);
   Nan::SetPrototypeMethod(f_tpl, "load_factor", load_factor);
   Nan::SetPrototypeMethod(f_tpl, "max_load_factor", max_load_factor);
-  Nan::SetPrototypeMethod(f_tpl, "keys", keys);
 
   auto proto = f_tpl->PrototypeTemplate();
   Nan::SetNamedPropertyHandler(proto, PropGetter, PropSetter, PropQuery, PropDeleter, PropEnumerator,
@@ -583,16 +559,6 @@ v8::Local<v8::Function> SharedMap::init_methods(v8::Local<v8::FunctionTemplate> 
   auto fun = Nan::GetFunction(f_tpl).ToLocalChecked();
   constructor().Reset(fun);
   return fun;
-}
-
-void SharedMap::connectNodejsFunctions(Nan::NAN_PROPERTY_GETTER_ARGS_TYPE info) {
-  v8::Local<v8::Object> global = info.GetIsolate()->GetCurrentContext()->Global();
-  this->JSON = v8::Local<v8::Object>::Cast(
-    global->Get(Nan::New<v8::String>("JSON").ToLocalChecked()));
-  this->stringify = v8::Local<v8::Function>::Cast(
-    this->JSON->Get(Nan::New<v8::String>("stringify").ToLocalChecked()));
-  this->parse = v8::Local<v8::Function>::Cast(
-    this->JSON->Get(Nan::New<v8::String>("parse").ToLocalChecked()));
 }
 
 NAN_MODULE_INIT(SharedMap::Init) {

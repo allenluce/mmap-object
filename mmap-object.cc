@@ -3,16 +3,22 @@
 #include <boost/interprocess/managed_shared_memory.hpp>
 #include <boost/interprocess/containers/string.hpp>
 #include <boost/unordered_map.hpp>
+#include <boost/version.hpp>
 #include <nan.h>
+
+#if BOOST_VERSION != 105500
+#pragma message("Found boost version " BOOST_PP_STRINGIZE(BOOST_LIB_VERSION))
+#error mmap-object needs version 1_55 to maintain compatibility.
+#endif
 
 #define MINIMUM_FILE_SIZE 500 // Minimum necessary to handle an mmap'd unordered_map on all platforms.
 #define DEFAULT_FILE_SIZE 5ul<<20 // 5 megs
 #define DEFAULT_MAX_SIZE 5000ul<<20 // 5000 megs
 
+// For Win32 compatibility
 #ifndef S_ISDIR
 #define S_ISDIR(mode)  (((mode) & S_IFMT) == S_IFDIR)
 #endif
-
 #ifndef S_ISREG
 #define S_ISREG(mode)  (((mode) & S_IFMT) == S_IFREG)
 #endif

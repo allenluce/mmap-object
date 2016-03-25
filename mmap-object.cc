@@ -105,6 +105,7 @@ private:
   bool readonly;
   bool closed;
   void grow(size_t);
+  void reconnect();
   void setFilename(string);
   static NAN_METHOD(Create);
   static NAN_METHOD(Open);
@@ -187,17 +188,21 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
           v8::Local<v8::Value> args[] = { value };
 
           v8::Isolate* isolate = info.GetIsolate();
-          v8::Local<v8::Object> global = isolate->GetCurrentContext()->Global();
-          v8::Local<v8::Object> JSON = v8::Local<v8::Object>::Cast(
-            global->Get(Nan::New<v8::String>("JSON").ToLocalChecked()));
-          v8::Local<v8::Function> stringify = v8::Local<v8::Function>::Cast(
-            JSON->Get(Nan::New<v8::String>("stringify").ToLocalChecked()));
+          v8::Locker locker(isolate);
+          v8::Isolate::Scope isolateScope(isolate);
+          if (isolate->InContext()) {
+            v8::Local<v8::Object> global = isolate->GetCurrentContext()->Global();
+            v8::Local<v8::Object> JSON = v8::Local<v8::Object>::Cast(
+              global->Get(Nan::New<v8::String>("JSON").ToLocalChecked()));
+            v8::Local<v8::Function> stringify = v8::Local<v8::Function>::Cast(
+              JSON->Get(Nan::New<v8::String>("stringify").ToLocalChecked()));
 
-          v8::Local<v8::String> result = stringify->Call(JSON, 1, args)->ToString();
-          v8::String::Utf8Value data(result);
-          data_length += data.length();
-          char_allocator allocer(self->map_seg->get_segment_manager());
-          c = new Cell(string(*data).c_str(), allocer, OBJECT_TYPE);
+            v8::Local<v8::String> result = stringify->Call(JSON, 1, args)->ToString();
+            v8::String::Utf8Value data(result);
+            data_length += data.length();
+            char_allocator allocer(self->map_seg->get_segment_manager());
+            c = new Cell(string(*data).c_str(), allocer, OBJECT_TYPE);
+          }
         } else if (value->IsString()) {
           v8::String::Utf8Value data(value);
           data_length += data.length();
@@ -236,6 +241,9 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
     }
   } catch(FileTooLarge) {
     Nan::ThrowError("File grew too large.");
+  } catch(exception& ex) {
+    Nan::ThrowError(ex.what());
+    self->reconnect();
   }
 }
 
@@ -243,6 +251,7 @@ NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
   v8::String::Utf8Value data(info.Data());
   v8::String::Utf8Value src(property);
   if (string(*data) == "prototype" ||
+    string(*src) == "close" ||
     string(*src) == "isClosed" ||
     string(*src) == "isOpen" ||
     string(*src) == "valueOf" ||
@@ -257,36 +266,49 @@ NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
     return;
   }
 
-  // If the map doesn't have it, let v8 continue the search.
-  auto pair = self->property_map->find<char_string, hasher, s_equal_to>
-    (*src, hasher(), s_equal_to());
+  try {
+    // If the map doesn't have it, let v8 continue the search.
+    auto pair = self->property_map->find<char_string, hasher, s_equal_to>
+      (*src, hasher(), s_equal_to());
 
-  if (pair == self->property_map->end())
-    return;
-  Cell *c = &pair->second;
-  if (c->type() == OBJECT_TYPE) {
-    v8::Local<v8::Value> args[] = { Nan::New<v8::String>(c->c_str()).ToLocalChecked() };
+    if (pair == self->property_map->end())
+      return;
+    Cell *c = &pair->second;
+    if (c->type() == OBJECT_TYPE) {
+      v8::Local<v8::Value> args[] = { Nan::New<v8::String>(c->c_str()).ToLocalChecked() };
 
-    v8::Isolate* isolate = info.GetIsolate();
-    v8::Local<v8::Object> global = isolate->GetCurrentContext()->Global();
-    v8::Local<v8::Object> JSON = v8::Local<v8::Object>::Cast(
-      global->Get(Nan::New<v8::String>("JSON").ToLocalChecked()));
-    v8::Local<v8::Function> parse = v8::Local<v8::Function>::Cast(
-      JSON->Get(Nan::New<v8::String>("parse").ToLocalChecked()));
+      v8::Isolate* isolate = info.GetIsolate();
+      v8::Locker locker(isolate);
+      v8::Isolate::Scope isolateScope(isolate);
 
-    try {
-      v8::Local<v8::Value> result = parse->Call(JSON, 1, args);
-      info.GetReturnValue().Set(result);
+      if (isolate->InContext()) {
+        v8::EscapableHandleScope handle_scope(isolate);
+        v8::TryCatch trycatch(isolate);
+        v8::Local<v8::Object> global = isolate->GetCurrentContext()->Global();
+        v8::Local<v8::Object> JSON = v8::Local<v8::Object>::Cast(
+          global->Get(Nan::New<v8::String>("JSON").ToLocalChecked()));
+        v8::Local<v8::Function> parse = v8::Local<v8::Function>::Cast(
+          JSON->Get(Nan::New<v8::String>("parse").ToLocalChecked()));
+
+        v8::Local<v8::Value> result = handle_scope.Escape(parse->Call(JSON, 1, args));
+        if (!trycatch.HasCaught()) {
+          info.GetReturnValue().Set(result);
+        }
+        else {
+          trycatch.Reset();
+          // @todo memory error and wrong string to parse on reader when writer performs grow()
+          self->reconnect();
+        }
+      }
     }
-    catch (v8::Exception) {
-      // @todo
-      // Nan::ThrowError("Cannot parse object.");
-      // return;
+    else if (c->type() == STRING_TYPE) {
+      info.GetReturnValue().Set(Nan::New<v8::String>(c->c_str()).ToLocalChecked());
+    } else if (c->type() == NUMBER_TYPE) {
+      info.GetReturnValue().Set((double)*c);
     }
-  } else if (c->type() == STRING_TYPE) {
-    info.GetReturnValue().Set(Nan::New<v8::String>(c->c_str()).ToLocalChecked());
-  } else if (c->type() == NUMBER_TYPE) {
-    info.GetReturnValue().Set((double)*c);
+  } catch (exception& ex) {
+    Nan::ThrowError(ex.what());
+    self->reconnect();
   }
 }
 
@@ -294,6 +316,7 @@ NAN_PROPERTY_QUERY(SharedMap::PropQuery) {
   v8::String::Utf8Value data(info.Data());
   v8::String::Utf8Value src(property);
   if (string(*data) == "prototype" ||
+    string(*src) == "close" ||
     string(*src) == "isClosed" ||
     string(*src) == "isOpen" ||
     string(*src) == "valueOf" ||
@@ -313,14 +336,19 @@ NAN_PROPERTY_QUERY(SharedMap::PropQuery) {
     return;
   }
 
-  // If the map doesn't have it, let v8 continue the search.
-  auto pair = self->property_map->find<char_string, hasher, s_equal_to>
-    (*src, hasher(), s_equal_to());
+  try {
+    // If the map doesn't have it, let v8 continue the search.
+    auto pair = self->property_map->find<char_string, hasher, s_equal_to>
+      (*src, hasher(), s_equal_to());
 
-  if (pair == self->property_map->end()) {
-    return;
+    if (pair == self->property_map->end()) {
+      return;
+    }
+    info.GetReturnValue().Set(Nan::New<v8::Integer>(v8::None));
+  } catch (exception& ex) {
+    Nan::ThrowError(ex.what());
+    self->reconnect();
   }
-  info.GetReturnValue().Set(Nan::New<v8::Integer>(v8::None));
 }
 
 NAN_PROPERTY_DELETER(SharedMap::PropDeleter) {
@@ -344,12 +372,17 @@ NAN_PROPERTY_DELETER(SharedMap::PropDeleter) {
     return;
   }
 
-  v8::String::Utf8Value prop(property);
-  shared_string *string_key;
-  char_allocator allocer(self->map_seg->get_segment_manager());
-  string_key = new shared_string(string(*prop).c_str(), allocer);
-  self->property_map->erase(*string_key);
-  info.GetReturnValue().Set(true);
+  try {
+    v8::String::Utf8Value prop(property);
+    shared_string *string_key;
+    char_allocator allocer(self->map_seg->get_segment_manager());
+    string_key = new shared_string(string(*prop).c_str(), allocer);
+    self->property_map->erase(*string_key);
+    info.GetReturnValue().Set(true);
+  } catch (exception& ex) {
+    Nan::ThrowError(ex.what());
+    self->reconnect();
+  }
 }
 
 NAN_PROPERTY_ENUMERATOR(SharedMap::PropEnumerator) {
@@ -357,15 +390,20 @@ NAN_PROPERTY_ENUMERATOR(SharedMap::PropEnumerator) {
   auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
 
   if (self->closed) {
-    Nan::ThrowError("Cannot read from closed object.");
+    Nan::ThrowError("Cannot enumerate closed object.");
     return;
   }
 
-  int i = 0;
-  for (auto it = self->property_map->begin(); it != self->property_map->end(); ++it) {
-    arr->Set(i++, Nan::New<v8::String>(it->first.c_str()).ToLocalChecked());
+  try {
+    int i = 0;
+    for (auto it = self->property_map->begin(); it != self->property_map->end(); ++it) {
+      arr->Set(i++, Nan::New<v8::String>(it->first.c_str()).ToLocalChecked());
+    }
+    info.GetReturnValue().Set(arr);
+  } catch (exception& ex) {
+    Nan::ThrowError(ex.what());
+    self->reconnect();
   }
-  info.GetReturnValue().Set(arr);
 }
 
 NAN_INDEX_GETTER(SharedMap::IndexGetter) {
@@ -501,6 +539,14 @@ void SharedMap::setFilename(string fn_string) {
   file_name = fn_string;
 }
 
+void SharedMap::reconnect() {
+  map_seg->flush();
+  delete map_seg;
+  map_seg = new bip::managed_mapped_file(bip::open_only, file_name.c_str());
+  property_map = map_seg->find<PropertyHash>("properties").first;
+  closed = false;
+}
+
 void SharedMap::grow(size_t size) {
   file_size += size;
   if (file_size > max_file_size) {
@@ -514,14 +560,25 @@ void SharedMap::grow(size_t size) {
   closed = false;
 }
 
-
 NAN_METHOD(SharedMap::Close) {
   auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
-  bip::managed_mapped_file::shrink_to_fit(self->file_name.c_str());
-  self->map_seg->flush();
+  if (self->closed) {
+    return;
+  }
+  self->closed = true;
+  bool shrink = (self->map_seg->get_size() > self->file_size);
+  if (!self->readonly) {
+    self->map_seg->flush();
+  }
   delete self->map_seg;
   self->map_seg = NULL;
-  self->closed = true;
+  if (!self->readonly && shrink) {
+    try {
+      bip::managed_mapped_file::shrink_to_fit(self->file_name.c_str());
+    } catch (exception& ex) {
+      Nan::ThrowError(ex.what());
+    }
+  }
 }
 
 NAN_METHOD(SharedMap::isClosed) {

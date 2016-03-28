@@ -5,6 +5,12 @@
 #include <boost/unordered_map.hpp>
 #include <nan.h>
 
+#include <boost/interprocess/sync/interprocess_sharable_mutex.hpp>
+#include <boost/interprocess/sync/scoped_lock.hpp>
+#include <boost/interprocess/sync/sharable_lock.hpp>
+#include "boost/date_time/posix_time/posix_time_types.hpp"
+#include <boost/thread/thread_time.hpp>
+
 #define MINIMUM_FILE_SIZE 500 // Minimum necessary to handle an mmap'd unordered_map on all platforms.
 #define DEFAULT_FILE_SIZE 5ul<<20 // 5 megs
 #define DEFAULT_MAX_SIZE 5000ul<<20 // 5000 megs
@@ -29,6 +35,15 @@ typedef SharedAllocator<char> char_allocator;
 
 typedef bip::basic_string<char, char_traits<char>, char_allocator> shared_string;
 typedef bip::basic_string<char, char_traits<char>> char_string;
+
+struct Locker {
+  volatile size_t version;
+  mutable bip::interprocess_sharable_mutex mutex;
+  mutable bip::interprocess_sharable_mutex reload_mutex;
+};
+typedef bip::sharable_lock<bip::interprocess_sharable_mutex> SharableLock;
+typedef bip::scoped_lock<bip::interprocess_sharable_mutex> ScopedLock;
+#define WAIT_TIME (boost::get_system_time() + boost::posix_time::seconds(15))
 
 #define UNINITIALIZED 0
 #define STRING_TYPE 1
@@ -104,8 +119,10 @@ private:
   PropertyHash *property_map;
   bool readonly;
   bool closed;
+  bip::managed_mapped_file* segment;
+  size_t version;
   void grow(size_t);
-  void reconnect();
+  void reload();
   void setFilename(string);
   static NAN_METHOD(Create);
   static NAN_METHOD(Open);
@@ -181,23 +198,57 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
   size_t data_length = sizeof(Cell);
 
   try {
-    Cell *c;
+  v8::String::Utf8Value prop(property);
+  data_length += prop.length();
+  v8::Local<v8::String> result;
+  if (value->IsObject() || value->IsArray()) {
+    v8::Local<v8::Value> args[] = { value };
+
+    v8::Isolate* isolate = info.GetIsolate();
+    v8::Locker locker(isolate);
+    v8::Isolate::Scope isolateScope(isolate);
+    if (isolate->InContext()) {
+      v8::Local<v8::Object> global = isolate->GetCurrentContext()->Global();
+      v8::Local<v8::Object> JSON = v8::Local<v8::Object>::Cast(
+        global->Get(Nan::New<v8::String>("JSON").ToLocalChecked()));
+      v8::Local<v8::Function> stringify = v8::Local<v8::Function>::Cast(
+        JSON->Get(Nan::New<v8::String>("stringify").ToLocalChecked()));
+
+      result = stringify->Call(JSON, 1, args)->ToString();
+    }
+  }
+  else if (value->IsString()) {
+  }
+  else if (value->IsNumber()) {
+  }
+  else if (!(value->IsUndefined() || value->IsNull())) {
+    Nan::ThrowError("Value must be a string or number.");
+    return;
+  }
+
+  ScopedLock lock;
+  if (self->segment != NULL) {
+    Locker *locker = self->segment->find<Locker>("locker").first;
+    ScopedLock lock1(locker->mutex, WAIT_TIME);
+    lock.swap(lock1);
+    if (!lock.owns()) {
+      // In case of process crashed or terminated, mutex will remain forever locked.
+      // After unsuccessfull waiting, destroy all mutex info and continue from start.
+      self->segment->destroy<Locker>("locker");
+      locker = self->segment->find_or_construct<Locker>("locker")();
+    }
+    if (locker->version != self->version) {
+      // Need to reopen shared memory, as it may be invalidated.
+      self->reload();
+      self->version = locker->version;
+    }
+  }
+
+  Cell *c;
     while(true) {
       try {
         if (value->IsObject() || value->IsArray()) {
-          v8::Local<v8::Value> args[] = { value };
-
-          v8::Isolate* isolate = info.GetIsolate();
-          v8::Locker locker(isolate);
-          v8::Isolate::Scope isolateScope(isolate);
-          if (isolate->InContext()) {
-            v8::Local<v8::Object> global = isolate->GetCurrentContext()->Global();
-            v8::Local<v8::Object> JSON = v8::Local<v8::Object>::Cast(
-              global->Get(Nan::New<v8::String>("JSON").ToLocalChecked()));
-            v8::Local<v8::Function> stringify = v8::Local<v8::Function>::Cast(
-              JSON->Get(Nan::New<v8::String>("stringify").ToLocalChecked()));
-
-            v8::Local<v8::String> result = stringify->Call(JSON, 1, args)->ToString();
+      if (!result.IsEmpty()) {
             v8::String::Utf8Value data(result);
             data_length += data.length();
             char_allocator allocer(self->map_seg->get_segment_manager());
@@ -211,20 +262,14 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
         } else if (value->IsNumber()) {
           data_length += sizeof(double);
           c = new Cell(Nan::To<double>(value).FromJust());
-        } else if (!(value->IsUndefined() || value->IsNull())) {
-          Nan::ThrowError("Value must be a string or number.");
-          return;
         }
 
-        v8::String::Utf8Value prop(property);
-        data_length += prop.length();
         shared_string *string_key;
         char_allocator allocer(self->map_seg->get_segment_manager());
         string_key = new shared_string(string(*prop).c_str(), allocer);
         if (value->IsUndefined() || value->IsNull()) {
           self->property_map->erase(*string_key);
-        }
-        else {
+        } else {
           auto pair = self->property_map->insert({ *string_key, *c });
           if (!pair.second) {
             self->property_map->erase(*string_key);
@@ -234,16 +279,15 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
         info.GetReturnValue().Set(value);
         break;
       } catch(std::length_error) {
-        self->grow(data_length * 2);
+        self->grow(data_length);
       } catch(bip::bad_alloc) {
-        self->grow(data_length * 2);
+        self->grow(data_length);
       }
     }
   } catch(FileTooLarge) {
     Nan::ThrowError("File grew too large.");
   } catch(exception& ex) {
     Nan::ThrowError(ex.what());
-    self->reconnect();
   }
 }
 
@@ -267,6 +311,21 @@ NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
   }
 
   try {
+    SharableLock lock;
+    if (self->segment != NULL) {
+      Locker *locker = self->segment->find<Locker>("locker").first;
+      SharableLock lock1(locker->mutex, WAIT_TIME);
+      lock.swap(lock1);
+      if (!lock.owns()) {
+        self->segment->destroy<Locker>("locker");
+        locker = self->segment->find_or_construct<Locker>("locker")();
+      }
+      if (locker->version != self->version) {
+        self->reload();
+        self->version = locker->version;
+      }
+    }
+
     // If the map doesn't have it, let v8 continue the search.
     auto pair = self->property_map->find<char_string, hasher, s_equal_to>
       (*src, hasher(), s_equal_to());
@@ -297,7 +356,7 @@ NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
         else {
           trycatch.Reset();
           // @todo memory error and wrong string to parse on reader when writer performs grow()
-          self->reconnect();
+          self->reload();
         }
       }
     }
@@ -308,7 +367,6 @@ NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
     }
   } catch (exception& ex) {
     Nan::ThrowError(ex.what());
-    self->reconnect();
   }
 }
 
@@ -337,6 +395,21 @@ NAN_PROPERTY_QUERY(SharedMap::PropQuery) {
   }
 
   try {
+    SharableLock lock;
+    if (self->segment != NULL) {
+      Locker *locker = self->segment->find<Locker>("locker").first;
+      SharableLock lock1(locker->mutex, WAIT_TIME);
+      lock.swap(lock1);
+      if (!lock.owns()) {
+        self->segment->destroy<Locker>("locker");
+        locker = self->segment->find_or_construct<Locker>("locker")();
+      }
+      if (locker->version != self->version) {
+        self->reload();
+        self->version = locker->version;
+      }
+    }
+
     // If the map doesn't have it, let v8 continue the search.
     auto pair = self->property_map->find<char_string, hasher, s_equal_to>
       (*src, hasher(), s_equal_to());
@@ -347,7 +420,6 @@ NAN_PROPERTY_QUERY(SharedMap::PropQuery) {
     info.GetReturnValue().Set(Nan::New<v8::Integer>(v8::None));
   } catch (exception& ex) {
     Nan::ThrowError(ex.what());
-    self->reconnect();
   }
 }
 
@@ -373,6 +445,21 @@ NAN_PROPERTY_DELETER(SharedMap::PropDeleter) {
   }
 
   try {
+    ScopedLock lock;
+    if (self->segment != NULL) {
+      Locker *locker = self->segment->find<Locker>("locker").first;
+      ScopedLock lock1(locker->mutex, WAIT_TIME);
+      lock.swap(lock1);
+      if (!lock.owns()) {
+        self->segment->destroy<Locker>("locker");
+        locker = self->segment->find_or_construct<Locker>("locker")();
+      }
+      if (locker->version != self->version) {
+        self->reload();
+        self->version = locker->version;
+      }
+    }
+
     v8::String::Utf8Value prop(property);
     shared_string *string_key;
     char_allocator allocer(self->map_seg->get_segment_manager());
@@ -381,7 +468,6 @@ NAN_PROPERTY_DELETER(SharedMap::PropDeleter) {
     info.GetReturnValue().Set(true);
   } catch (exception& ex) {
     Nan::ThrowError(ex.what());
-    self->reconnect();
   }
 }
 
@@ -395,6 +481,21 @@ NAN_PROPERTY_ENUMERATOR(SharedMap::PropEnumerator) {
   }
 
   try {
+    SharableLock lock;
+    if (self->segment != NULL) {
+      Locker *locker = self->segment->find<Locker>("locker").first;
+      SharableLock lock1(locker->mutex, WAIT_TIME);
+      lock.swap(lock1);
+      if (!lock.owns()) {
+        self->segment->destroy<Locker>("locker");
+        locker = self->segment->find_or_construct<Locker>("locker")();
+      }
+      if (locker->version != self->version) {
+        self->reload();
+        self->version = locker->version;
+      }
+    }
+
     int i = 0;
     for (auto it = self->property_map->begin(); it != self->property_map->end(); ++it) {
       arr->Set(i++, Nan::New<v8::String>(it->first.c_str()).ToLocalChecked());
@@ -402,7 +503,6 @@ NAN_PROPERTY_ENUMERATOR(SharedMap::PropEnumerator) {
     info.GetReturnValue().Set(arr);
   } catch (exception& ex) {
     Nan::ThrowError(ex.what());
-    self->reconnect();
   }
 }
 
@@ -455,6 +555,7 @@ NAN_METHOD(SharedMap::Create) {
   size_t file_size = (int)info[1]->Int32Value();
   size_t initial_bucket_count = (int)info[2]->Int32Value();
   size_t max_file_size = (int)info[3]->Int32Value();
+  bool thread_safe = (int)info[4]->BooleanValue();
   SharedMap *d = new SharedMap();
 
   if (file_size == 0) {
@@ -475,6 +576,21 @@ NAN_METHOD(SharedMap::Create) {
   }
 
   try {
+    ScopedLock lock;
+    if (thread_safe) {
+      d->segment = new bip::managed_mapped_file(bip::open_or_create, (string(*filename) + ".lock").c_str(), 1 * 1024);
+      Locker *locker = d->segment->find_or_construct<Locker>("locker")();
+      d->version = locker->version;
+      ScopedLock lock1(locker->mutex, WAIT_TIME);
+      lock.swap(lock1);
+      if (!lock.owns()) {
+        d->segment->destroy<Locker>("locker");
+        locker = d->segment->find_or_construct<Locker>("locker")();
+      }
+    } else {
+      d->segment = NULL;
+    }
+
     d->map_seg = new bip::managed_mapped_file(bip::open_or_create,string(*filename).c_str(), file_size);
     d->property_map = d->map_seg->find_or_construct<PropertyHash>("properties")
       (initial_bucket_count, hasher(), s_equal_to(), d->map_seg->get_segment_manager());
@@ -482,6 +598,10 @@ NAN_METHOD(SharedMap::Create) {
     ostringstream error_stream;
     error_stream << "Can't open file " << *filename << ": " << ex.what();
     Nan::ThrowError(error_stream.str().c_str());
+    return;
+  }
+  catch (exception& ex) {
+    Nan::ThrowError(ex.what());
     return;
   }
 
@@ -501,6 +621,7 @@ NAN_METHOD(SharedMap::Open) {
   }
 
   Nan::Utf8String filename(info[0]->ToString());
+  bool thread_safe = (int)info[1]->BooleanValue();
   SharedMap *d = new SharedMap();
 
   struct stat buf;
@@ -518,6 +639,21 @@ NAN_METHOD(SharedMap::Open) {
   }
 
   try {
+    SharableLock lock;
+    if (thread_safe) {
+      d->segment = new bip::managed_mapped_file(bip::open_or_create, (string(*filename) + ".lock").c_str(), 1 * 1024);
+      Locker *locker = d->segment->find_or_construct<Locker>("locker")();
+      d->version = locker->version;
+      SharableLock lock1(locker->mutex, WAIT_TIME);
+      lock.swap(lock1);
+      if (!lock.owns()) {
+        d->segment->destroy<Locker>("locker");
+        locker = d->segment->find_or_construct<Locker>("locker")();
+      }
+    } else {
+      d->segment = NULL;
+    }
+
     d->map_seg = new bip::managed_mapped_file(bip::open_read_only, string(*filename).c_str());
     auto find_map = d->map_seg->find<PropertyHash>("properties");
     d->property_map = find_map.first;
@@ -527,6 +663,7 @@ NAN_METHOD(SharedMap::Open) {
     Nan::ThrowError(error_stream.str().c_str());
     return;
   }
+
   d->readonly = true;
   d->closed = false;
   d->setFilename(*filename);
@@ -539,8 +676,8 @@ void SharedMap::setFilename(string fn_string) {
   file_name = fn_string;
 }
 
-void SharedMap::reconnect() {
-  map_seg->flush();
+void SharedMap::reload() {
+  //map_seg->flush();
   delete map_seg;
   map_seg = new bip::managed_mapped_file(bip::open_only, file_name.c_str());
   property_map = map_seg->find<PropertyHash>("properties").first;
@@ -548,13 +685,30 @@ void SharedMap::reconnect() {
 }
 
 void SharedMap::grow(size_t size) {
-  file_size += size;
+  size_t nsize = file_size / 2;
+  if (nsize < size) {
+      nsize = size;
+  }
+  file_size += nsize;
   if (file_size > max_file_size) {
     throw FileTooLarge();
   }
   map_seg->flush();
   delete map_seg;
-  bip::managed_mapped_file::grow(file_name.c_str(), size);
+  Locker *locker;
+  if (segment) {
+    locker = segment->find<Locker>("locker").first;
+  }
+  // already locked
+  // ScopedLock lock(locker->mutex, WAIT_TIME);
+  try {
+    bip::managed_mapped_file::shrink_to_fit(file_name.c_str());
+  } catch (...) {}
+  bip::managed_mapped_file::grow(file_name.c_str(), nsize);
+  if (segment) {
+    locker->version++;
+    version = locker->version;
+  }
   map_seg = new bip::managed_mapped_file(bip::open_only, file_name.c_str());
   property_map = map_seg->find<PropertyHash>("properties").first;
   closed = false;
@@ -566,18 +720,30 @@ NAN_METHOD(SharedMap::Close) {
     return;
   }
   self->closed = true;
-  bool shrink = (self->map_seg->get_size() > self->file_size);
   if (!self->readonly) {
     self->map_seg->flush();
   }
   delete self->map_seg;
   self->map_seg = NULL;
-  if (!self->readonly && shrink) {
+  if (!self->readonly) {
     try {
+      ScopedLock lock;
+      Locker *locker;
+      if (self->segment) {
+        locker = self->segment->find<Locker>("locker").first;
+        ScopedLock lock1(locker->mutex, WAIT_TIME);
+        lock.swap(lock1);
+      }
       bip::managed_mapped_file::shrink_to_fit(self->file_name.c_str());
-    } catch (exception& ex) {
-      Nan::ThrowError(ex.what());
-    }
+      if (self->segment) {
+        locker->version++;
+      }
+    } catch (...) {}
+  }
+  if (self->segment) {
+    self->segment->flush();
+    delete self->segment;
+    self->segment = NULL;
   }
 }
 

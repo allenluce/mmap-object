@@ -75,7 +75,7 @@ shared_object['new_key'] = null;
 
 ## API
 
-### new Create(path, [file_size], [initial_bucket_count], [max_file_size])
+### new Create(path, [file_size], [initial_bucket_count], [max_file_size], [safe])
 
 Creates a new file mapped into shared memory or opens existing one.  Returns an object that
 provides access to the shared memory.  Throws an exception on error.  
@@ -89,20 +89,27 @@ __Arguments__
   larger size.  Minimum is 500 bytes.  Defaults to 5 megabytes.
 * `initial_bucket_count` - *Optional* The number of buckets to
   allocate initially.  This is passed to the underlying
-  [Boost unordered_map](http://www.boost.org/doc/libs/1_38_0/doc/html/boost/unordered_map.html).
+  [Boost unordered_map](http://www.boost.org/doc/libs/1_55_0/doc/html/boost/unordered_map.html).
   Defaults to 1024. Set this to the number of keys you expect to write.
 * `max_file_size` - *Optional* The largest the file is allowed to
   grow.  If data is added beyond this limit, an exception is thrown.
   Defaults to 5 gigabytes.
+* `safe` - When true, operations on shared memory are thread-safe between processes using
+  [interprocess sharable mutex](http://www.boost.org/doc/libs/1_55_0/boost/interprocess/sync/interprocess_sharable_mutex.hpp)
+  (`Open` must use safe=true too to make this work)
+
 
 __Example__
 
 ```js
 // Create a 500K map for 300 objects.
-let obj = new Create("/tmp/sharedmem", 500000, 300)
+let obj = new Create("/tmp/sharedmem", null, 500000, 300)
+
+// Create thread-safe 500K map for 300 objects.
+let obj = new Create("/tmp/sharedmem", 500000, 300, null, true)
 ```
 
-### new Open(path)
+### new Open(path, [safe])
 
 Maps an existing file into shared memory.  Returns an object that
 provides read-only access to the shared memory.  Throws an exception
@@ -113,12 +120,18 @@ only the part of the file that is actually accesses will be loaded.
 __Arguments__
 
 * `path` - The path of the file to open
+* `safe` - When true, operations on shared memory are thread-safe between processes using
+  [interprocess sharable mutex](http://www.boost.org/doc/libs/1_55_0/boost/interprocess/sync/interprocess_sharable_mutex.hpp)
+  (Works when `Create` writer is using safe=true too)
 
 __Example__
 
 ```js
 // Open up that shared file
 let obj = new Open("/tmp/sharedmem")
+
+// open safe
+let obj = new Open("/tmp/sharedmem", true)
 ```
 
 ### close()

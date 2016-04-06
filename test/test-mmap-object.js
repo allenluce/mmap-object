@@ -143,6 +143,11 @@ describe('mmap-object', function () {
         smallobj['otherkey'] = new Array(BigKeySize).join('big')
       }).to.throw(/File grew too large./)
     })
+
+    it('allows numbers as property names', function () {
+      this.shobj[1] = 'what'
+      expect(this.shobj[1]).to.equal('what')
+    })
   })
 
   describe('Informational methods:', function () {

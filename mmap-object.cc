@@ -336,24 +336,6 @@ NAN_PROPERTY_ENUMERATOR(SharedMap::PropEnumerator) {
   info.GetReturnValue().Set(arr);
 }
 
-NAN_INDEX_GETTER(IndexGetter) {
-  Nan::ThrowError("Shared object is not indexable.");
-}
-
-NAN_INDEX_SETTER(IndexSetter) {
-  Nan::ThrowError("Shared object is not indexable.");
-}
-
-NAN_INDEX_QUERY(IndexQuery) {
-  Nan::ThrowError("Shared object is not indexable.");
-}
-
-NAN_INDEX_DELETER(IndexDeleter) {
-  Nan::ThrowError("Shared object is not indexable.");
-}
-
-NAN_INDEX_ENUMERATOR(IndexEnumerator) {}
-
 #define INFO_METHOD(name, type, object) NAN_METHOD(SharedMap::name) { \
   auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This()); \
   info.GetReturnValue().Set((type)self->object->name()); \
@@ -511,8 +493,6 @@ v8::Local<v8::Function> SharedMap::init_methods(v8::Local<v8::FunctionTemplate> 
   inst->SetInternalFieldCount(1);
   Nan::SetNamedPropertyHandler(inst, PropGetter, PropSetter, PropQuery, PropDeleter, PropEnumerator,
                                Nan::New<v8::String>("instance").ToLocalChecked());
-  Nan::SetIndexedPropertyHandler(inst, IndexGetter, IndexSetter, IndexQuery, IndexDeleter, IndexEnumerator,
-                                 Nan::New<v8::String>("instance").ToLocalChecked());
 
   auto fun = Nan::GetFunction(f_tpl).ToLocalChecked();
   constructor().Reset(fun);

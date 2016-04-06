@@ -327,6 +327,7 @@ describe('mmap-object', function () {
 
   describe('Still can read old format', function () {
     before(function () {
+      // The test file is only readable on Linux.
       if (os.platform() === 'darwin') {
         this.skip()
       } else {

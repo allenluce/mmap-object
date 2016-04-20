@@ -288,6 +288,14 @@ describe('mmap-object', function () {
         expect(obj).to.not.exist
       }).to.throw(/.dev.null is not a regular file./)
     })
+
+    it('throws when closing a closed object', function () {
+      const obj = new MmapObject.Open(this.testfile)
+      obj.close()
+      expect(function () {
+        obj.close()
+      }).to.throw(/Attempted to close a closed object./)
+    })
   })
 
   describe('Object comparison', function () {

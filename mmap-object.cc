@@ -325,7 +325,7 @@ NAN_PROPERTY_ENUMERATOR(SharedMap::PropEnumerator) {
   auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
 
   if (self->closed) {
-    Nan::ThrowError("Cannot read from closed object.");
+    info.GetReturnValue().Set(Nan::New<v8::Array>(v8::None));
     return;
   }
 
@@ -457,6 +457,11 @@ void SharedMap::grow(size_t size) {
 
 NAN_METHOD(SharedMap::Close) {
   auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
+  if (self->closed) {
+    Nan::ThrowError("Attempted to close a closed object.");
+    return;
+  }
+
   bip::managed_mapped_file::shrink_to_fit(self->file_name.c_str());
   self->map_seg->flush();
   delete self->map_seg;

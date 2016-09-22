@@ -116,6 +116,7 @@ private:
   static NAN_METHOD(Close);
   static NAN_METHOD(isClosed);
   static NAN_METHOD(isOpen);
+  static NAN_METHOD(isData);
   static NAN_METHOD(get_free_memory);
   static NAN_METHOD(get_size);
   static NAN_METHOD(bucket_count);
@@ -147,7 +148,8 @@ bool isMethod(string name) {
     "bucket_count",
     "max_bucket_count",
     "load_factor",
-    "max_load_factor"
+    "max_load_factor",
+    "isData"
   };
   set<string> method_set(methods, methods + sizeof(methods) / sizeof(methods[0]));
 
@@ -479,10 +481,28 @@ NAN_METHOD(SharedMap::isOpen) {
   info.GetReturnValue().Set(!self->closed);
 }
 
+NAN_METHOD(SharedMap::isData) {
+  auto value = info[0];
+  if (value->IsFunction()) {
+    bool success = Nan::GetRealNamedProperty(value->ToObject(),
+                                             Nan::New("name").ToLocalChecked()
+                                             ).ToLocal(&value);
+    if (!success) {
+      value = info[0];
+    }
+  }
+  bool result = true;
+  if (value->IsString()) {
+    result = !isMethod(*Nan::Utf8String(value->ToString()));
+  }
+  info.GetReturnValue().Set(result);
+}
+
 v8::Local<v8::Function> SharedMap::init_methods(v8::Local<v8::FunctionTemplate> f_tpl) {
   Nan::SetPrototypeMethod(f_tpl, "close", Close);
   Nan::SetPrototypeMethod(f_tpl, "isClosed", isClosed);
   Nan::SetPrototypeMethod(f_tpl, "isOpen", isOpen);
+  Nan::SetPrototypeMethod(f_tpl, "isData", isData);
   Nan::SetPrototypeMethod(f_tpl, "get_free_memory", get_free_memory);
   Nan::SetPrototypeMethod(f_tpl, "get_size", get_size);
   Nan::SetPrototypeMethod(f_tpl, "bucket_count", bucket_count);

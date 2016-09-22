@@ -296,6 +296,20 @@ describe('mmap-object', function () {
         obj.close()
       }).to.throw(/Attempted to close a closed object./)
     })
+    it('can differentiate between library methods and data', function () {
+      expect(this.reader.isData(this.reader.first)).to.be.true
+      expect(this.reader.isData('first')).to.be.true
+
+      expect(this.reader.isData(this.reader.close)).to.be.false
+      expect(this.reader.isData('close')).to.be.false
+
+      expect(this.reader.isData('')).to.be.true
+      expect(this.reader.isData()).to.be.true
+      expect(this.reader.isData(undefined)).to.be.true
+      expect(this.reader.isData(null)).to.be.true
+      expect(this.reader.isData(this.reader)).to.be.true
+      expect(this.reader.isData(Symbol('close'))).to.be.true
+    })
   })
 
   describe('Object comparison', function () {

@@ -10,7 +10,14 @@
 #include <stdbool.h>
 #include <boost/interprocess/managed_mapped_file.hpp>
 #include <boost/interprocess/managed_shared_memory.hpp>
+#include <boost/interprocess/mapped_region.hpp>
+#include <boost/interprocess/shared_memory_object.hpp>
+#include <boost/interprocess/sync/interprocess_upgradable_mutex.hpp>
+#include <boost/interprocess/sync/scoped_lock.hpp>
+#include <boost/interprocess/sync/sharable_lock.hpp>
+#include <boost/interprocess/sync/upgradable_lock.hpp>
 #include <boost/interprocess/containers/string.hpp>
+#include <boost/scope_exit.hpp>
 #include <boost/unordered_map.hpp>
 #include <boost/version.hpp>
 #include <nan.h>
@@ -106,6 +113,9 @@ typedef boost::unordered_map<
   s_equal_to,
   map_allocator> PropertyHash;
 
+#define MUTEX_NAME "MMAP_OBJECT_SHARED_MUTEX"
+typedef bip::interprocess_upgradable_mutex upgradable_mutex_type;
+
 class SharedMap : public Nan::ObjectWrap {
 public:
   static NAN_MODULE_INIT(Init);
@@ -118,8 +128,14 @@ private:
   PropertyHash *property_map;
   bool readonly;
   bool closed;
+  
+  upgradable_mutex_type *mutex;
+  bip::mapped_region mutex_region;
+
   void grow(size_t);
+  void grow_private(size_t);
   void setFilename(string);
+  void reify_mutex();
   static NAN_METHOD(Create);
   static NAN_METHOD(Open);
   static NAN_METHOD(Close);
@@ -133,6 +149,7 @@ private:
   static NAN_METHOD(load_factor);
   static NAN_METHOD(max_load_factor);
   static NAN_METHOD(inspect);
+  static NAN_METHOD(remove_shared_mutex);
   static NAN_PROPERTY_SETTER(PropSetter);
   static NAN_PROPERTY_GETTER(PropGetter);
   static NAN_PROPERTY_QUERY(PropQuery);
@@ -165,7 +182,8 @@ bool isMethod(string name) {
     "max_bucket_count",
     "load_factor",
     "max_load_factor",
-    "isData"
+    "isData",
+    "remove_shared_mutex"
   };
   set<string> method_set(methods, methods + sizeof(methods) / sizeof(methods[0]));
 
@@ -218,6 +236,7 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
 
   size_t data_length = sizeof(Cell);
 
+  bip::scoped_lock<upgradable_mutex_type> lock(*self->mutex);
   try {
     Cell *c;
     while(true) {
@@ -247,9 +266,9 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
         }
         break;
       } catch(length_error) {
-        self->grow(data_length * 2);
+        self->grow_private(data_length * 2);
       } catch(bip::bad_alloc) {
-        self->grow(data_length * 2);
+        self->grow_private(data_length * 2);
       }
     }
   } catch(FileTooLarge) {
@@ -370,7 +389,7 @@ NAN_PROPERTY_DELETER(SharedMap::PropDeleter) {
     Nan::ThrowError("Cannot delete from closed object.");
     return;
   }
-
+  bip::scoped_lock<upgradable_mutex_type> lock(*self->mutex);
   v8::String::Utf8Value prop(property);
   shared_string *string_key;
   char_allocator allocer(self->map_seg->get_segment_manager());
@@ -406,12 +425,53 @@ INFO_METHOD(max_bucket_count, uint32_t, property_map)
 INFO_METHOD(load_factor, float, property_map)
 INFO_METHOD(max_load_factor, float, property_map)
 
+NAN_METHOD(SharedMap::remove_shared_mutex) {
+  bip::shared_memory_object::remove(MUTEX_NAME);
+}
+
+void SharedMap::reify_mutex() {
+  // Find or create the mutex.
+  bip::shared_memory_object shm;
+  try {
+    shm = bip::shared_memory_object(bip::open_only, MUTEX_NAME, bip::read_write);
+    mutex_region = bip::mapped_region(shm, bip::read_write);
+  } catch(bip::interprocess_exception &ex){
+    if (ex.get_error_code() == 7) { // Need to create one
+      bip::shared_memory_object::remove(MUTEX_NAME);
+      shm = bip::shared_memory_object(bip::create_only, MUTEX_NAME, bip::read_write);
+      shm.truncate(sizeof (upgradable_mutex_type));
+      mutex_region = bip::mapped_region(shm, bip::read_write);
+      new (mutex_region.get_address()) upgradable_mutex_type;
+    } else {
+      ostringstream error_stream;
+      error_stream << "Can't open mutex: " << ex.what();
+      Nan::ThrowError(error_stream.str().c_str());
+      return;
+    }      
+  }
+
+  mutex = static_cast<upgradable_mutex_type *>(mutex_region.get_address());
+  
+  // Trial lock
+  try {
+    bip::scoped_lock<upgradable_mutex_type> lock(*mutex);
+  } catch (bip::lock_exception &ex) {
+    if (ex.get_error_code() == 15) { // Need to init the lock area
+      new (mutex_region.get_address()) upgradable_mutex_type;
+    } else {
+      ostringstream error_stream;
+      error_stream << "Bad shared mutex: " << ex.what();
+      Nan::ThrowError(error_stream.str().c_str());
+      return;
+    }
+  }  
+}
+
 NAN_METHOD(SharedMap::Create) {
   if (!info.IsConstructCall()) {
     Nan::ThrowError("Create must be called as a constructor.");
     return;
   }
-
   Nan::Utf8String filename(info[0]->ToString());
   size_t file_size = (int)info[1]->Int32Value();
   file_size *= 1024;
@@ -419,7 +479,6 @@ NAN_METHOD(SharedMap::Create) {
   size_t max_file_size = (int)info[3]->Int32Value();
   max_file_size *= 1024;
   SharedMap *d = new SharedMap();
-
   if (file_size == 0) {
     file_size = DEFAULT_FILE_SIZE;
   }
@@ -448,6 +507,7 @@ NAN_METHOD(SharedMap::Create) {
     return;
   }
 
+  d->reify_mutex();
   d->readonly = false;
   d->closed = false;
   d->setFilename(*filename);
@@ -490,6 +550,7 @@ NAN_METHOD(SharedMap::Open) {
     Nan::ThrowError(error_stream.str().c_str());
     return;
   }
+  d->reify_mutex();
   d->readonly = true;
   d->closed = false;
   d->setFilename(*filename);
@@ -502,6 +563,11 @@ void SharedMap::setFilename(string fn_string) {
 }
 
 void SharedMap::grow(size_t size) {
+  bip::scoped_lock<upgradable_mutex_type> lock(*mutex);
+  grow_private(size);
+}
+
+void SharedMap::grow_private(size_t size) {
   file_size += size;
   if (file_size > max_file_size) {
     throw FileTooLarge();
@@ -561,6 +627,7 @@ v8::Local<v8::Function> SharedMap::init_methods(v8::Local<v8::FunctionTemplate> 
   Nan::SetPrototypeMethod(f_tpl, "isClosed", isClosed);
   Nan::SetPrototypeMethod(f_tpl, "isOpen", isOpen);
   Nan::SetPrototypeMethod(f_tpl, "isData", isData);
+  Nan::SetPrototypeMethod(f_tpl, "remove_shared_mutex", remove_shared_mutex);
   Nan::SetPrototypeMethod(f_tpl, "get_free_memory", get_free_memory);
   Nan::SetPrototypeMethod(f_tpl, "get_size", get_size);
   Nan::SetPrototypeMethod(f_tpl, "bucket_count", bucket_count);

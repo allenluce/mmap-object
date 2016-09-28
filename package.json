@@ -1,6 +1,6 @@
 {
   "name": "mmap-object",
-  "description": "Wrap a shared memory-mapped file in a plain old object.",
+  "description": "Objects in shared memory.",
   "main": "lib/mmap-object",
   "scripts": {
     "test": "mocha test/test-*",
@@ -20,9 +20,27 @@
   "license": "ISC",
   "gypfile": true,
   "dependencies": {
-    "nan": "^2.3.5",
+    "nan": "^2.4.0",
     "node-pre-gyp": "^0.6.28"
   },
+  "keywords": [
+    "c++",
+    "cache",
+    "concurrency",
+    "ipc",
+    "memory mapped",
+    "mmap",
+    "multithreaded",
+    "multithreading",
+    "parallel",
+    "parallelism",
+    "performance",
+    "persistent memory",
+    "shared memory",
+    "shared",
+    "shm",
+    "shmop"
+  ],
   "devDependencies": {
     "chai": "^3.5.0",
     "mocha": "^3.2.0",

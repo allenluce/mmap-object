@@ -26,7 +26,8 @@ describe('mmap-object', function () {
 
   describe('Writer', function () {
     beforeEach(function () {
-      this.shobj = new MmapObject.Create(path.join(this.dir, this.currentTest.title))
+      this.filename = path.join(this.dir, this.currentTest.title)
+      this.shobj = new MmapObject.Create(this.filename)
     })
 
     afterEach(function () {
@@ -416,6 +417,56 @@ describe('mmap-object', function () {
     it('reads number properties', function () {
       expect(this.oldformat.my_number_property).to.equal(27)
       expect(this.oldformat['some other number property']).to.equal(23.42)
+    })
+  })
+  describe('read-write objects', function() {
+    beforeEach(function () {
+      this.filename = path.join(this.dir, this.currentTest.title)
+      this.shobj = new MmapObject.Create(this.filename)
+    })
+
+    afterEach(function () {
+      this.shobj.close()
+    })
+    it('works across processes', function (done) {
+      process.env.TESTFILE = this.testfile
+      const child = child_process.fork('./test/util-rw-process.js', [this.filename])
+      child.on('exit', function (exit_code) {
+        expect(child.signalCode).to.be.null
+        expect(exit_code, 'error from util-rw-process.js').to.equal(0)
+        done()
+      })
+      this.shobj['one'] = 'first'
+      let state = 0
+      child.on('message', msg => {
+        switch (msg) {
+          case 'started':
+            expect(state).to.equal(0)
+            child.send('read')
+            state++
+            break
+          case 'first': // Make sure it's reading anything.
+            expect(state).to.equal(1)
+            state++
+            this.shobj.writeLock( cb => {
+              this.shobj['one'] = 'second'
+              child.send('read') // Will it read 'second'??
+              setTimeout(() => {
+                this.shobj['one'] = 'third'
+                cb()
+              }, 200)
+            })
+            break
+          case 'third': // Nope, it read the right thing!
+            expect(state).to.equal(2)
+            done()
+            state++
+            break
+          default: // It read the wrong thing.  Probably 'second'.
+            expect.fail(`Didn't expect ${msg}`)
+            break
+        }
+      })
     })
   })
 })

@@ -26,7 +26,8 @@ describe('mmap-object', function () {
 
   describe('Writer', function () {
     beforeEach(function () {
-      this.shobj = new MmapObject.Create(path.join(this.dir, this.currentTest.title))
+      this.filename = path.join(this.dir, this.currentTest.title)
+      this.shobj = new MmapObject.Create(this.filename)
     })
 
     afterEach(function () {
@@ -401,6 +402,64 @@ describe('mmap-object', function () {
     it('reads number properties', function () {
       expect(this.oldformat.my_number_property).to.equal(27)
       expect(this.oldformat['some other number property']).to.equal(23.42)
+    })
+  })
+  describe.only('read-write objects', function() {
+    beforeEach(function () {
+      this.filename = path.join(this.dir, this.currentTest.title)
+      this.shobj = new MmapObject.Create(this.filename)
+    })
+
+    afterEach(function () {
+      this.shobj.close()
+    })
+    it('works across processes', function (done) {
+      process.env.TESTFILE = this.testfile
+      const child = child_process.fork('./test/util-rw-process.js', [this.filename])
+      child.on('exit', function (exit_code) {
+        expect(child.signalCode).to.be.null
+        expect(exit_code, 'error from util-rw-process.js').to.equal(0)
+        done()
+      })
+      this.shobj['one'] = 'first'
+      // write first
+      // Have the child open the object and read first
+      // then start a transaction, within the transaction write scond
+      // tell the child to read
+      // sleep for a second
+      // write third
+      // release transaction
+      // make sure the child ended up with second
+      let state = 0
+      child.on('message', msg => {
+        console.log("CHILD SAYS: " + msg)
+        switch (msg) {
+          case 'started':
+            expect(state).to.equal(0)
+            child.send('read')
+            state++
+            break
+          case 'first':
+            expect(state).to.equal(1)
+            state++
+            this.shobj.writeLock( done => {
+              this.shobj['one'] = 'second'
+              child.send('read')
+              setTimeout(function () {
+                this.shobj['one'] = 'third'
+                done()
+              }, 200)
+            })
+            break
+          case 'third':
+            expect(state).to.equal(2)
+            state++
+            break
+          default:
+            expect.fail(`Didn't expect ${msg}`)
+            break
+        }
+      })
     })
   })
 })

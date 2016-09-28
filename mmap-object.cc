@@ -336,6 +336,7 @@ NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
     Nan::ThrowError("Cannot read from closed object.");
     return;
   }
+  bip::sharable_lock<upgradable_mutex_type> lock(*self->mutex);
 
   // If the map doesn't have it, let v8 continue the search.
   auto pair = self->property_map->find<char_string, hasher, s_equal_to>
@@ -412,6 +413,7 @@ NAN_PROPERTY_ENUMERATOR(SharedMap::PropEnumerator) {
   }
 
   int i = 0;
+  bip::sharable_lock<upgradable_mutex_type> lock(*self->mutex);
   for (auto it = self->property_map->begin(); it != self->property_map->end(); ++it) {
 	  arr->Set(i++, Nan::New<v8::String>(it->first.c_str()).ToLocalChecked());
   }
@@ -420,6 +422,7 @@ NAN_PROPERTY_ENUMERATOR(SharedMap::PropEnumerator) {
 
 #define INFO_METHOD(name, type, object) NAN_METHOD(SharedMap::name) { \
   auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This()); \
+  bip::sharable_lock<upgradable_mutex_type> lock(*self->mutex); \
   info.GetReturnValue().Set((type)self->object->name()); \
 }
 
@@ -596,6 +599,7 @@ void SharedMap::grow_private(size_t size) {
 
 NAN_METHOD(SharedMap::Close) {
   auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
+  bip::scoped_lock<upgradable_mutex_type> lock(*self->mutex);
   if (self->closed) {
     Nan::ThrowError("Attempted to close a closed object.");
     return;

@@ -30,7 +30,8 @@ describe('mmap-object', function () {
 
   describe('Writer', function () {
     beforeEach(function () {
-      this.shobj = new MmapObject.Create(path.join(this.dir, this.currentTest.title))
+      this.filename = path.join(this.dir, this.currentTest.title)
+      this.shobj = new MmapObject.Create(this.filename)
     })
 
     afterEach(function () {
@@ -497,6 +498,59 @@ describe('mmap-object', function () {
     it('reads number properties', function () {
       expect(this.oldformat.my_number_property).to.equal(27)
       expect(this.oldformat['some other number property']).to.equal(23.42)
+    })
+  })
+  describe('read-write objects', function() {
+    beforeEach(function () {
+      this.filename = path.join(this.dir, this.currentTest.title)
+      this.shobj = new MmapObject.Create(this.filename)
+    })
+
+    afterEach(function () {
+      this.shobj.close()
+    })
+    it('works across processes', function (done) {
+      let state = 0
+      process.env.TESTFILE = this.testfile
+      const child = childProcess.fork('./test/util-rw-process.js', [this.filename])
+      child.on('exit', function (exit_code) {
+        expect(state).to.equal(3) // Make sure we've gone through the whole test
+        expect(child.signalCode).to.be.null // And child didn't die due to signal
+        expect(exit_code, 'error from util-rw-process.js').to.equal(0) // Or exit with error
+        done()
+      })
+      this.shobj['one'] = 'first' // First value child should read
+      child.on('message', msg => {
+        switch (msg) {
+          case 'started':
+            expect(state).to.equal(0)
+            child.send('read') // No lock set, child should immediately read 'first'
+            state++
+            break
+          case 'first': // Confirms that child read 'first'
+            expect(state).to.equal(1)
+            state++
+            this.shobj.writeLock(unLock => { // Lock the shared object.
+              this.shobj['one'] = 'second' // Set to "wrong" value.
+              child.send('read') // Child's read should be blocked by the writelock.
+              setTimeout(() => { // Give child time to (potentially) fail
+                this.shobj['one'] = 'third' // Set to "right" value
+                unLock() // Unblock child's read
+              }, 200)
+            })
+            break
+          case 'second': // Child should NEVER read this
+            return done(new Error('Locking is not working.'))
+            break
+          case 'third': // Child read the right thing!
+            expect(state).to.equal(2)
+            state++
+            child.send('exit')
+            break
+          default: // Something wrong happened here.
+            return done(new Error(`Didn't expect ${msg}`))
+        }
+      })
     })
   })
 })

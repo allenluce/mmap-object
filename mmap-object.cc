@@ -7,14 +7,27 @@
     #endif
   #endif
 #endif
+#include <stdbool.h>
+#include <assert.h>
 #include <boost/interprocess/managed_mapped_file.hpp>
+#include <boost/interprocess/managed_shared_memory.hpp>
+#include <boost/interprocess/mapped_region.hpp>
+#include <boost/interprocess/shared_memory_object.hpp>
+#include <boost/interprocess/sync/interprocess_upgradable_mutex.hpp>
+#include <boost/interprocess/sync/scoped_lock.hpp>
+#include <boost/interprocess/sync/sharable_lock.hpp>
+#include <boost/interprocess/sync/upgradable_lock.hpp>
 #include <boost/interprocess/containers/string.hpp>
+#include <boost/scope_exit.hpp>
+#include <boost/thread/thread_time.hpp>
 #include <boost/unordered_map.hpp>
 #include <boost/version.hpp>
 #include "cell.hpp"
 #include "aho_corasick.hpp"
 
 #include "common.hpp"
+
+#define LOCKINFO(lock) // cout << ::getpid() << " LOCK " << lock << endl
 
 #if BOOST_VERSION < 105500
   #pragma message("Found boost version " BOOST_PP_STRINGIZE(BOOST_LIB_VERSION))
@@ -41,10 +54,10 @@ typedef bip::basic_string<char, char_traits<char>> char_string;
 // This changes whenever fields are added/changed in Cell
 #define FILEVERSION 1
 // Also allow version 0 for now. Revisit once FILEVERSION goes to 2.
-#define ALSOOK 0 
+#define ALSOOK 0
 
 #define CHECK_VERSION(obj)                                              \
-  if (obj->version != FILEVERSION && obj->version != ALSOOK) {        \
+  if (obj->version != FILEVERSION && obj->version != ALSOOK) {          \
     ostringstream error_stream;                                         \
     error_stream << "File " << *filename << " is format version " << obj->version; \
     error_stream << " (version " << FILEVERSION << " is expected)";     \
@@ -83,6 +96,9 @@ typedef boost::unordered_map<
   s_equal_to,
   map_allocator> PropertyHash;
 
+#define MUTEX_NAME "MMAP_OBJECT_SHARED_MUTEX"
+typedef bip::interprocess_upgradable_mutex upgradable_mutex_type;
+
 class SharedMap : public Nan::ObjectWrap {
   SharedMap(string file_name, size_t file_size, size_t max_file_size) :
     file_name(file_name), file_size(file_size), max_file_size(max_file_size),
@@ -90,6 +106,7 @@ class SharedMap : public Nan::ObjectWrap {
   SharedMap(string file_name) : file_name(file_name), readonly(false), closed(true) {}
 
 public:
+  SharedMap() : closed(false), inWriteLock(false) {}
   static NAN_MODULE_INIT(Init);
 
 private:
@@ -101,15 +118,24 @@ private:
   PropertyHash *property_map;
   bool readonly;
   bool closed;
+
   PropertyHash::iterator iter;
-  
+  upgradable_mutex_type *mutex;
+  bool inWriteLock;
+  bip::mapped_region mutex_region;
+
   void grow(size_t);
+  void grow_private(size_t);
+  void setFilename(string);
+  void reify_mutex();
   static NAN_METHOD(Create);
   static NAN_METHOD(Open);
   static NAN_METHOD(Close);
   static NAN_METHOD(isClosed);
   static NAN_METHOD(isOpen);
   static NAN_METHOD(isData);
+  static NAN_METHOD(writeLock);
+  static NAN_METHOD(writeUnlock);
   static NAN_METHOD(get_free_memory);
   static NAN_METHOD(get_size);
   static NAN_METHOD(bucket_count);
@@ -118,6 +144,7 @@ private:
   static NAN_METHOD(max_load_factor);
   static NAN_METHOD(fileFormatVersion);
   static NAN_METHOD(next);
+  static NAN_METHOD(remove_shared_mutex);
   static NAN_PROPERTY_SETTER(PropSetter);
   static NAN_PROPERTY_GETTER(PropGetter);
   static NAN_PROPERTY_QUERY(PropQuery);
@@ -158,7 +185,8 @@ void buildMethods() {
     "propertyIsEnumerable",
     "toString",
     "fileFormatVersion",
-    "valueOf"
+    "valueOf",
+    "remove_shared_mutex"
   };
 
   for (const string &method : methods) {
@@ -184,6 +212,14 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
   }
 
   size_t data_length = sizeof(Cell);
+  bip::scoped_lock<upgradable_mutex_type> lock;
+
+  if (!self->inWriteLock) {
+    LOCKINFO("1");
+    bip::scoped_lock<upgradable_mutex_type> lock_(*self->mutex);
+    lock.swap(lock_);
+    LOCKINFO("1 SUCCESS");
+  }
 
   try {
     unique_ptr<Cell> c;
@@ -201,9 +237,9 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
         }
         break;
       } catch(length_error) {
-        self->grow(data_length * 2);
+        self->grow_private(data_length * 2);
       } catch(bip::bad_alloc) {
-        self->grow(data_length * 2);
+        self->grow_private(data_length * 2);
       }
     }
   } catch(FileTooLarge) {
@@ -245,7 +281,7 @@ NAN_METHOD(SharedMap::next) {
   // Always return an object
   auto obj = Nan::New<v8::Object>();
   info.GetReturnValue().Set(obj);
-  
+
   auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.Data().As<v8::Object>());
 
   // Determine if we're at the end of the iteration
@@ -260,7 +296,7 @@ NAN_METHOD(SharedMap::next) {
 
   Cell *c = &self->iter->second; // value
   arr->Set(1, c->GetValue());
-  
+
   // Per iteration protocol, the value property of the returned object
   // holds the data for this iteration.
   Nan::Set(obj, Nan::New<v8::String>("value").ToLocalChecked(), arr);
@@ -300,6 +336,9 @@ NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
     Nan::ThrowError("Cannot read from closed object.");
     return;
   }
+  LOCKINFO("SHARE 1");
+  bip::sharable_lock<upgradable_mutex_type> lock(*self->mutex);
+  LOCKINFO("SHARE 1 SUCCESS");
 
   auto pair = self->property_map->find<char_string, hasher, s_equal_to>
     (*src, hasher(), s_equal_to());
@@ -325,7 +364,7 @@ NAN_PROPERTY_QUERY(SharedMap::PropQuery) {
     info.GetReturnValue().Set(Nan::New<v8::Integer>(v8::ReadOnly | v8::DontDelete));
     return;
   }
-    
+
   info.GetReturnValue().Set(Nan::New<v8::Integer>(v8::None));
 }
 
@@ -334,14 +373,14 @@ NAN_PROPERTY_DELETER(SharedMap::PropDeleter) {
     Nan::ThrowError("Symbol properties are not supported for delete.");
     return;
   }
-  
+
   v8::String::Utf8Value src UTF8VALUE(property);
 
   if (isMethod(string(*src))) {
     info.GetReturnValue().Set(Nan::New<v8::Boolean>(v8::None));
     return;
   }
-  
+
   auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
 
   if (self->readonly) {
@@ -353,7 +392,9 @@ NAN_PROPERTY_DELETER(SharedMap::PropDeleter) {
     Nan::ThrowError("Cannot delete from closed object.");
     return;
   }
-
+  LOCKINFO("2");
+  bip::scoped_lock<upgradable_mutex_type> lock(*self->mutex);
+  LOCKINFO("2 SUCCESS");
   v8::String::Utf8Value prop UTF8VALUE(property);
   shared_string *string_key;
   char_allocator allocer(self->map_seg->get_segment_manager());
@@ -371,6 +412,7 @@ NAN_PROPERTY_ENUMERATOR(SharedMap::PropEnumerator) {
   }
 
   int i = 0;
+  bip::sharable_lock<upgradable_mutex_type> lock(*self->mutex);
   for (auto it = self->property_map->begin(); it != self->property_map->end(); ++it) {
 	  arr->Set(i++, Nan::New<v8::String>(it->first.c_str()).ToLocalChecked());
   }
@@ -379,6 +421,7 @@ NAN_PROPERTY_ENUMERATOR(SharedMap::PropEnumerator) {
 
 #define INFO_METHOD(name, type, object) NAN_METHOD(SharedMap::name) { \
   auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This()); \
+  bip::sharable_lock<upgradable_mutex_type> lock(*self->mutex); \
   info.GetReturnValue().Set((type)self->object->name()); \
 }
 
@@ -394,12 +437,59 @@ NAN_METHOD(SharedMap::fileFormatVersion) {
   info.GetReturnValue().Set((uint32_t)self->version);
 }
 
+NAN_METHOD(SharedMap::remove_shared_mutex) {
+  bip::shared_memory_object::remove(MUTEX_NAME);
+}
+
+void SharedMap::reify_mutex() {
+  // Find or create the mutex.
+  bip::shared_memory_object shm;
+  try {
+    shm = bip::shared_memory_object(bip::open_only, MUTEX_NAME, bip::read_write);
+    mutex_region = bip::mapped_region(shm, bip::read_write);
+  } catch(bip::interprocess_exception &ex){
+    if (ex.get_error_code() == 7) { // Need to create one
+      bip::shared_memory_object::remove(MUTEX_NAME);
+      shm = bip::shared_memory_object(bip::create_only, MUTEX_NAME, bip::read_write);
+      shm.truncate(sizeof (upgradable_mutex_type));
+      mutex_region = bip::mapped_region(shm, bip::read_write);
+      new (mutex_region.get_address()) upgradable_mutex_type;
+    } else {
+      ostringstream error_stream;
+      error_stream << "Can't open mutex: " << ex.what();
+      Nan::ThrowError(error_stream.str().c_str());
+      return;
+    }
+  }
+
+  mutex = static_cast<upgradable_mutex_type *>(mutex_region.get_address());
+
+  // Trial lock
+  try {
+    LOCKINFO("3");
+    bip::scoped_lock<upgradable_mutex_type> lock(*mutex, boost::get_system_time() + boost::posix_time::seconds(1));
+    if (lock == 0) { // Didn't grab. May be messed up.
+      new (mutex_region.get_address()) upgradable_mutex_type;
+      LOCKINFO("MESSED UP");
+    }
+    LOCKINFO("3 SUCCESS");
+  } catch (bip::lock_exception &ex) {
+    if (ex.get_error_code() == 15) { // Need to init the lock area
+      new (mutex_region.get_address()) upgradable_mutex_type;
+    } else {
+      ostringstream error_stream;
+      error_stream << "Bad shared mutex: " << ex.what();
+      Nan::ThrowError(error_stream.str().c_str());
+      return;
+    }
+  }
+}
+
 NAN_METHOD(SharedMap::Create) {
   if (!info.IsConstructCall()) {
     Nan::ThrowError("Create must be called as a constructor.");
     return;
   }
-
   Nan::Utf8String filename(info[0]->ToString());
   size_t file_size = (int)info[1]->Int32Value();
   file_size *= 1024;
@@ -443,6 +533,9 @@ NAN_METHOD(SharedMap::Create) {
     Nan::ThrowError(error_stream.str().c_str());
     return;
   }
+
+  d->reify_mutex();
+  d->readonly = false;
   d->Wrap(info.This());
   info.GetReturnValue().Set(info.This());
 }
@@ -501,6 +594,7 @@ NAN_METHOD(SharedMap::Open) {
     Nan::ThrowError(error_stream.str().c_str());
     return;
   }
+  d->reify_mutex();
   d->readonly = true;
   d->closed = false;
   d->Wrap(info.This());
@@ -508,6 +602,13 @@ NAN_METHOD(SharedMap::Open) {
 }
 
 void SharedMap::grow(size_t size) {
+  LOCKINFO("4");
+  bip::scoped_lock<upgradable_mutex_type> lock(*mutex);
+  LOCKINFO("4 SUCCESS");
+  grow_private(size);
+}
+
+void SharedMap::grow_private(size_t size) {
   file_size += size;
   if (file_size > max_file_size) {
     throw FileTooLarge();
@@ -526,11 +627,13 @@ struct CloseWorker : public Nan::AsyncWorker {
     : AsyncWorker(callback), map(Nan::ObjectWrap::Unwrap<SharedMap>(map)) {
     SaveToPersistent(uint32_t(0), map);
   }
+
   virtual void Execute() { // May run in a separate thread
     if (map->closed) {
       SetErrorMessage("Attempted to close a closed object.");
-      return;                                
+      return;
     }
+    bip::scoped_lock<upgradable_mutex_type> lock(*map->mutex);
     bip::managed_mapped_file::shrink_to_fit(map->file_name.c_str());
     map->map_seg->flush();
     delete map->map_seg;
@@ -586,11 +689,38 @@ NAN_METHOD(SharedMap::isData) {
   info.GetReturnValue().Set(result);
 }
 
+NAN_METHOD(SharedMap::writeUnlock) {
+  auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
+  self->inWriteLock = false;
+  self->mutex->unlock();
+  LOCKINFO("5 SUCCESS");
+}
+
+NAN_METHOD(SharedMap::writeLock) {
+  auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
+  auto func = Nan::New<v8::Function>(writeUnlock);
+  // Bind the unlock function to this object
+  auto bind = Nan::Get(func, Nan::New("bind").ToLocalChecked()).ToLocalChecked();
+  v8::Local<v8::Value> argvl[1] = {info.This()};
+  auto boundFunc = Nan::Call(bind.As<v8::Function>(), func, 1, argvl).ToLocalChecked();
+  // Send it to the given callback as a callback.
+  v8::Local<v8::Value> argv[1] = {boundFunc};
+
+  self->mutex->lock();
+  self->inWriteLock = true;
+  LOCKINFO("5");
+
+  Nan::AsyncResource resource("mmap-object:writeLock");
+  Nan::Callback(info[0].As<v8::Function>()).Call(1, argv, &resource);
+}
+
 v8::Local<v8::Function> SharedMap::init_methods(v8::Local<v8::FunctionTemplate> f_tpl) {
   Nan::SetPrototypeMethod(f_tpl, "close", Close);
   Nan::SetPrototypeMethod(f_tpl, "isClosed", isClosed);
   Nan::SetPrototypeMethod(f_tpl, "isOpen", isOpen);
   Nan::SetPrototypeMethod(f_tpl, "isData", isData);
+  Nan::SetPrototypeMethod(f_tpl, "writeLock", writeLock);
+  Nan::SetPrototypeMethod(f_tpl, "remove_shared_mutex", remove_shared_mutex);
   Nan::SetPrototypeMethod(f_tpl, "get_free_memory", get_free_memory);
   Nan::SetPrototypeMethod(f_tpl, "get_size", get_size);
   Nan::SetPrototypeMethod(f_tpl, "bucket_count", bucket_count);

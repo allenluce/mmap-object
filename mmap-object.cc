@@ -18,6 +18,7 @@
 #include <boost/interprocess/sync/upgradable_lock.hpp>
 #include <boost/interprocess/containers/string.hpp>
 #include <boost/scope_exit.hpp>
+#include <boost/thread/thread_time.hpp>
 #include <boost/unordered_map.hpp>
 #include <boost/version.hpp>
 #include <nan.h>
@@ -236,7 +237,9 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
 
   size_t data_length = sizeof(Cell);
 
+  cout << "LOCK 1" << endl;
   bip::scoped_lock<upgradable_mutex_type> lock(*self->mutex);
+  cout << "LOCK 1 SUCCESS" << endl;
   try {
     Cell *c;
     while(true) {
@@ -389,7 +392,9 @@ NAN_PROPERTY_DELETER(SharedMap::PropDeleter) {
     Nan::ThrowError("Cannot delete from closed object.");
     return;
   }
+  cout << "LOCK 2" << endl;
   bip::scoped_lock<upgradable_mutex_type> lock(*self->mutex);
+  cout << "LOCK 2 SUCCESS" << endl;
   v8::String::Utf8Value prop(property);
   shared_string *string_key;
   char_allocator allocer(self->map_seg->get_segment_manager());
@@ -454,7 +459,13 @@ void SharedMap::reify_mutex() {
   
   // Trial lock
   try {
-    bip::scoped_lock<upgradable_mutex_type> lock(*mutex);
+    cout << "LOCK 3" << endl;
+    bip::scoped_lock<upgradable_mutex_type> lock(*mutex, boost::get_system_time() + boost::posix_time::seconds(1));
+    if (lock == 0) { // Didn't grab. May be messed up.
+      new (mutex_region.get_address()) upgradable_mutex_type;
+      cout << "YEAH MESSED UP" << endl;
+    }      
+    cout << "LOCK 3 SUCCESS" << endl;
   } catch (bip::lock_exception &ex) {
     if (ex.get_error_code() == 15) { // Need to init the lock area
       new (mutex_region.get_address()) upgradable_mutex_type;
@@ -563,7 +574,9 @@ void SharedMap::setFilename(string fn_string) {
 }
 
 void SharedMap::grow(size_t size) {
+  cout << "LOCK 4" << endl;
   bip::scoped_lock<upgradable_mutex_type> lock(*mutex);
+  cout << "LOCK 4 SUCCESS" << endl;
   grow_private(size);
 }
 

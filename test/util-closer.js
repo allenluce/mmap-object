@@ -14,9 +14,9 @@ const expect = require('chai').expect
 const async = require('async')
 
 function closeit (done) {
-  const reader = new MmapObject.Open(process.env.TESTFILE)
-  expect(reader.first).to.equal('value for first')
-  reader.close(done)
+  const reader = MmapObject(process.env.TESTFILE)
+  expect(reader.obj.first).to.equal('value for first')
+  reader.control.close(done)
 }
 
 async.times(4000, function (n, next) {

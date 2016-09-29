@@ -50,7 +50,8 @@ public:
   const char *c_str();
   operator double();
   v8::Local<v8::Value> GetValue(); 
-  static size_t SetValue(v8::Local<v8::Value> value, bip::managed_mapped_file *segment, unique_ptr<Cell> &c, const Nan::PropertyCallbackInfo<v8::Value>& info);
+  static size_t ValueLength(v8::Local<v8::Value> value);
+  static void SetValue(v8::Local<v8::Value> value, bip::managed_mapped_file *segment, unique_ptr<Cell> &c, const Nan::PropertyCallbackInfo<v8::Value>& info);
 };
 
 class WrongPropertyType: public exception {};

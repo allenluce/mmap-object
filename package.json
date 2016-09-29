@@ -20,7 +20,7 @@
   "license": "ISC",
   "gypfile": true,
   "dependencies": {
-    "nan": "^2.3.5",
+    "nan": "^2.4.0",
     "node-pre-gyp": "^0.6.28"
   },
   "keywords": [

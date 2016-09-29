@@ -8,6 +8,7 @@
   #endif
 #endif
 #include <stdbool.h>
+#include <assert.h>
 #include <boost/interprocess/managed_mapped_file.hpp>
 #include <boost/interprocess/managed_shared_memory.hpp>
 #include <boost/interprocess/mapped_region.hpp>
@@ -23,7 +24,7 @@
 #include <boost/version.hpp>
 #include <nan.h>
 
-#define LOCKINFO(lock) cout << "LOCK " << lock << endl
+#define LOCKINFO(lock) cout << ::getpid() << " LOCK " << lock << endl
 
 #if BOOST_VERSION < 105500
 #pragma message("Found boost version " BOOST_PP_STRINGIZE(BOOST_LIB_VERSION))
@@ -175,6 +176,7 @@ private:
   }
 };
 
+
 bool isMethod(string name) {
   string methods[] = {
     "isClosed",
@@ -242,12 +244,12 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
   }
 
   size_t data_length = sizeof(Cell);
-
   bip::scoped_lock<upgradable_mutex_type> lock;
   
   if (!self->inWriteLock) {
     LOCKINFO("1");
-    lock = bip::scoped_lock<upgradable_mutex_type>(*self->mutex);
+    bip::scoped_lock<upgradable_mutex_type> lock_(*self->mutex);
+    lock.swap(lock_);
     LOCKINFO("1 SUCCESS");
   }
   try {
@@ -650,17 +652,25 @@ NAN_METHOD(SharedMap::isData) {
 }
 
 NAN_METHOD(SharedMap::writeUnlock) {
-  cout << "CALLED" << endl;
-  auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
+  //auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
+  auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info[0].As<v8::Object>());
   self->inWriteLock = false;
   self->mutex->unlock();
   LOCKINFO("5 SUCCESS");
 }
 
+
 NAN_METHOD(SharedMap::writeLock) {
   auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
   auto callback = new Nan::Callback(info[0].As<v8::Function>());
-  v8::Local<v8::Value> argv[1] = {Nan::New(&writeUnlock)}; // No error by default.
+  auto func = Nan::New<v8::Function>(writeUnlock);
+  auto bind = Nan::Get(func, Nan::New("bind").ToLocalChecked()).ToLocalChecked();
+  v8::Local<v8::Value> argvl[2] = {func, info.This()}; // No error by default.
+  
+  auto v = Nan::Call(bind.As<v8::Function>(), func, 2, argvl);
+  
+  v8::Local<v8::Value> argv[1] = {v.ToLocalChecked()}; // No error by default.
+
   self->mutex->lock();
   self->inWriteLock = true;
   LOCKINFO("5");

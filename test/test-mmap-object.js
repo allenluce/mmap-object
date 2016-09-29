@@ -422,40 +422,32 @@ describe('mmap-object', function () {
         done()
       })
       this.shobj['one'] = 'first'
-      // write first
-      // Have the child open the object and read first
-      // then start a transaction, within the transaction write scond
-      // tell the child to read
-      // sleep for a second
-      // write third
-      // release transaction
-      // make sure the child ended up with second
       let state = 0
       child.on('message', msg => {
-        console.log("CHILD SAYS: " + msg)
         switch (msg) {
           case 'started':
             expect(state).to.equal(0)
             child.send('read')
             state++
             break
-          case 'first':
+          case 'first': // Make sure it's reading anything.
             expect(state).to.equal(1)
             state++
-            this.shobj.writeLock( done => {
+            this.shobj.writeLock( cb => {
               this.shobj['one'] = 'second'
-              child.send('read')
-              setTimeout(function () {
+              child.send('read') // Will it read 'second'??
+              setTimeout(() => {
                 this.shobj['one'] = 'third'
-                done()
+                cb()
               }, 200)
             })
             break
-          case 'third':
+          case 'third': // Nope, it read the right thing!
             expect(state).to.equal(2)
+            done()
             state++
             break
-          default:
+          default: // It read the wrong thing.  Probably 'second'.
             expect.fail(`Didn't expect ${msg}`)
             break
         }

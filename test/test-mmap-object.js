@@ -394,7 +394,7 @@ describe('mmap-object', function () {
   describe('Still can read old format', function () {
     before(function () {
       // The test file is only readable on Linux.
-      if (os.platform() === 'darwin') {
+      if (os.platform() !== 'linux') {
         this.skip()
       } else {
         const old_format_file = `${__dirname}/previous-format.bin`
@@ -403,7 +403,7 @@ describe('mmap-object', function () {
     })
 
     after(function () {
-      if (os.platform() !== 'darwin') {
+      if (os.platform() === 'linux') {
         this.oldformat.close()
       }
     })
@@ -436,9 +436,10 @@ describe('mmap-object', function () {
         expect(exit_code, 'error from util-rw-process.js').to.equal(0)
         done()
       })
-      this.shobj['one'] = 'first'
+      let shobj = this.shobj
+      shobj['one'] = 'first'
       let state = 0
-      child.on('message', msg => {
+      child.on('message', function (msg) {
         switch (msg) {
           case 'started':
             expect(state).to.equal(0)
@@ -448,11 +449,11 @@ describe('mmap-object', function () {
           case 'first': // Make sure it's reading anything.
             expect(state).to.equal(1)
             state++
-            this.shobj.writeLock( cb => {
-              this.shobj['one'] = 'second'
+            shobj.writeLock(function (cb) {
+              shobj['one'] = 'second'
               child.send('read') // Will it read 'second'??
-              setTimeout(() => {
-                this.shobj['one'] = 'third'
+              setTimeout(function () {
+                shobj['one'] = 'third'
                 cb()
               }, 200)
             })

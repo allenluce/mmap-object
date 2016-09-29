@@ -11,14 +11,11 @@
 #include <assert.h>
 #include <boost/interprocess/managed_mapped_file.hpp>
 #include <boost/interprocess/managed_shared_memory.hpp>
-#include <boost/interprocess/mapped_region.hpp>
 #include <boost/interprocess/shared_memory_object.hpp>
 #include <boost/interprocess/sync/interprocess_upgradable_mutex.hpp>
 #include <boost/interprocess/sync/scoped_lock.hpp>
 #include <boost/interprocess/sync/sharable_lock.hpp>
-#include <boost/interprocess/sync/upgradable_lock.hpp>
 #include <boost/interprocess/containers/string.hpp>
-#include <boost/scope_exit.hpp>
 #include <boost/thread/thread_time.hpp>
 #include <boost/unordered_map.hpp>
 #include <boost/version.hpp>
@@ -117,7 +114,6 @@ typedef boost::unordered_map<
   s_equal_to,
   map_allocator> PropertyHash;
 
-#define MUTEX_NAME "MMAP_OBJECT_SHARED_MUTEX"
 typedef bip::interprocess_upgradable_mutex upgradable_mutex_type;
 
 class SharedMap : public Nan::ObjectWrap {
@@ -141,7 +137,7 @@ private:
   void grow(size_t);
   void grow_private(size_t);
   void setFilename(string);
-  void reify_mutex();
+  void reify_mutex(string file_name);
   static NAN_METHOD(Create);
   static NAN_METHOD(Open);
   static NAN_METHOD(Close);
@@ -448,19 +444,24 @@ INFO_METHOD(load_factor, float, property_map)
 INFO_METHOD(max_load_factor, float, property_map)
 
 NAN_METHOD(SharedMap::remove_shared_mutex) {
-  bip::shared_memory_object::remove(MUTEX_NAME);
+  auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
+  string mutex_name(self->file_name);
+  replace( mutex_name.begin(), mutex_name.end(), '/', '-');
+  bip::shared_memory_object::remove(mutex_name.c_str());
 }
 
-void SharedMap::reify_mutex() {
+void SharedMap::reify_mutex(string file_name) {
+  string mutex_name(file_name);
+  replace(mutex_name.begin(), mutex_name.end(), '/', '-');
   // Find or create the mutex.
   bip::shared_memory_object shm;
   try {
-    shm = bip::shared_memory_object(bip::open_only, MUTEX_NAME, bip::read_write);
+    shm = bip::shared_memory_object(bip::open_only, mutex_name.c_str(), bip::read_write);
     mutex_region = bip::mapped_region(shm, bip::read_write);
   } catch(bip::interprocess_exception &ex){
     if (ex.get_error_code() == 7) { // Need to create one
-      bip::shared_memory_object::remove(MUTEX_NAME);
-      shm = bip::shared_memory_object(bip::create_only, MUTEX_NAME, bip::read_write);
+      bip::shared_memory_object::remove(mutex_name.c_str());
+      shm = bip::shared_memory_object(bip::create_only, mutex_name.c_str(), bip::read_write);
       shm.truncate(sizeof (upgradable_mutex_type));
       mutex_region = bip::mapped_region(shm, bip::read_write);
       new (mutex_region.get_address()) upgradable_mutex_type;
@@ -535,7 +536,7 @@ NAN_METHOD(SharedMap::Create) {
     return;
   }
 
-  d->reify_mutex();
+  d->reify_mutex(*filename);
   d->readonly = false;
   d->setFilename(*filename);
   d->file_size = file_size;
@@ -577,7 +578,7 @@ NAN_METHOD(SharedMap::Open) {
     Nan::ThrowError(error_stream.str().c_str());
     return;
   }
-  d->reify_mutex();
+  d->reify_mutex(*filename);
   d->readonly = true;
   d->setFilename(*filename);
   d->Wrap(info.This());

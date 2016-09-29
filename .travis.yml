@@ -25,6 +25,8 @@ notifications:
   irc:
     channels:
       secure: SymUTwTh2ngkFgLjjuqZQVCDODmzWPCO0nMf4vo30c1NcUG7jhWfTdseYvlFZyEKeIt22LGZGMcl/2fQG8UBmf4RwEZVsFPOaDYwcz/qg89lfzI5yyurNUc4tpe+qBWaeFXnAM6LawnSdXXQ2F7XAh5tT5xl6Mbp2yLdBM8LrCZZnsKSqNWai/m7BbZWJUI6dOmTx4LqSigax6rRhYm3/RWqGnSVo9abWNn+KNGsBZUwKe/rKerAmdzTYQVgAEXmx56wu2ChEWxGE0Vgq75s3VG7VJSqvMDb6L0WW3MkJp/OU0ZsR8AsY6BoQ18YbuQIhFXlsGwjZVppx+CdgxhQJACuhwKK3ZGUFhTHmLTu91/eRd9j8PbLndNeENjvQeJ74gJtCPH6v6W3+Mtu2L87/B+VN/wko5L8xBQKLxQi+Qiwb4AF1IkCR+jLhHDh3ikCvYhgQtItumpiBBMGsfwrNe8SLMfrX4SdwfB3D4bpRcEreq9mnYNwrE/KDlCxlSq21jwdMphoRCiNSww78KJQ9bQweCUtH9l/Kql+Q+W0Hs7Np1CDLC9wn9tYXtv7t9WV79YFZwkamchhYx/Key/G5SG5DQNuz6ELOC0Dn3A2QTL4C8GCKnoHqGqkc1W82CJW3JSqYDa8aHdyLPonDi4QvnkADtyok4apJvTUGW4+lCE=
+    use_notice: true
+    skip_join: true
 cache:
   directories:
   - node_modules

@@ -9,12 +9,9 @@ const obj = new MmapObject.Open(filename)
 
 process.send('started')
 process.on('message', function (msg) {
-  console.log("PARENT SAYS: " + msg)
   switch (msg) {
     case 'read':
-      console.log("BEFORE")
       process.send(obj['one'])
-      console.log("AFTER")
       break
     case 'exit':
       process.exit()

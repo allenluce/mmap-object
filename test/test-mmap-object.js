@@ -404,7 +404,7 @@ describe('mmap-object', function () {
       expect(this.oldformat['some other number property']).to.equal(23.42)
     })
   })
-  describe.only('read-write objects', function() {
+  describe('read-write objects', function() {
     beforeEach(function () {
       this.filename = path.join(this.dir, this.currentTest.title)
       this.shobj = new MmapObject.Create(this.filename)

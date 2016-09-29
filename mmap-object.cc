@@ -24,7 +24,7 @@
 #include <boost/version.hpp>
 #include <nan.h>
 
-#define LOCKINFO(lock) cout << ::getpid() << " LOCK " << lock << endl
+#define LOCKINFO(lock) // cout << ::getpid() << " LOCK " << lock << endl
 
 #if BOOST_VERSION < 105500
 #pragma message("Found boost version " BOOST_PP_STRINGIZE(BOOST_LIB_VERSION))
@@ -652,7 +652,6 @@ NAN_METHOD(SharedMap::isData) {
 }
 
 NAN_METHOD(SharedMap::writeUnlock) {
-  //auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
   auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info[0].As<v8::Object>());
   self->inWriteLock = false;
   self->mutex->unlock();
@@ -664,12 +663,12 @@ NAN_METHOD(SharedMap::writeLock) {
   auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
   auto callback = new Nan::Callback(info[0].As<v8::Function>());
   auto func = Nan::New<v8::Function>(writeUnlock);
+  // Bind function to this object
   auto bind = Nan::Get(func, Nan::New("bind").ToLocalChecked()).ToLocalChecked();
-  v8::Local<v8::Value> argvl[2] = {func, info.This()}; // No error by default.
-  
-  auto v = Nan::Call(bind.As<v8::Function>(), func, 2, argvl);
-  
-  v8::Local<v8::Value> argv[1] = {v.ToLocalChecked()}; // No error by default.
+  v8::Local<v8::Value> argvl[2] = {func, info.This()};
+  auto boundFunc = Nan::Call(bind.As<v8::Function>(), func, 2, argvl).ToLocalChecked();
+  // Send it as callback.
+  v8::Local<v8::Value> argv[1] = {boundFunc};
 
   self->mutex->lock();
   self->inWriteLock = true;

@@ -28,7 +28,7 @@
 #error mmap-object needs at least version 1_55 to maintain compatibility.
 #endif
 
-#define MINIMUM_FILE_SIZE 500 // Minimum necessary to handle an mmap'd unordered_map on all platforms.
+#define MINIMUM_FILE_SIZE 1024 // Minimum necessary to handle an mmap'd unordered_map on all platforms.
 #define DEFAULT_FILE_SIZE 5ul<<20 // 5 megs
 #define DEFAULT_MAX_SIZE 5000ul<<20 // 5000 megs
 
@@ -38,6 +38,12 @@
 #endif
 #ifndef S_ISREG
 #define S_ISREG(mode)  (((mode) & S_IFMT) == S_IFREG)
+#endif
+
+#if NODE_MODULE_VERSION < IOJS_3_0_MODULE_VERSION
+typedef v8::Handle<v8::Object> ADDON_REGISTER_FUNCTION_ARGS2_TYPE;
+#else
+typedef v8::Local<v8::Value> ADDON_REGISTER_FUNCTION_ARGS2_TYPE;
 #endif
 
 namespace bip=boost::interprocess;
@@ -117,10 +123,26 @@ typedef boost::unordered_map<
 typedef bip::interprocess_upgradable_mutex upgradable_mutex_type;
 
 class SharedMap : public Nan::ObjectWrap {
+  friend class SharedMapControl;
 public:
-  SharedMap() : closed(false), inWriteLock(false) {}
-  static NAN_MODULE_INIT(Init);
+  SharedMap() : readonly(false), closed(false), inWriteLock(false) {}
+  void reify_mutex(string file_name);
+  static NAN_MODULE_INIT(Init) {
+    auto tpl = Nan::New<v8::FunctionTemplate>();
+    auto inst = tpl->InstanceTemplate();
+    inst->SetInternalFieldCount(1);
+    Nan::SetNamedPropertyHandler(inst, PropGetter, PropSetter, PropQuery, PropDeleter, PropEnumerator,
+                                 Nan::New<v8::String>("prototype").ToLocalChecked());
+    Nan::SetIndexedPropertyHandler(inst, IndexGetter, IndexSetter, IndexQuery, IndexDeleter, IndexEnumerator,
+                                   Nan::New<v8::String>("instance").ToLocalChecked());
+    constructor().Reset(Nan::GetFunction(tpl).ToLocalChecked());
+  }
 
+  static v8::Local<v8::Object> NewInstance() {
+    v8::Local<v8::Function> cons = Nan::New(constructor());
+    return Nan::NewInstance(cons).ToLocalChecked();
+  }
+  
 private:
   string file_name;
   size_t file_size;
@@ -134,12 +156,36 @@ private:
   bool inWriteLock;
   bip::mapped_region mutex_region;
 
+  void setFilename(string);
   void grow(size_t);
   void grow_private(size_t);
-  void setFilename(string);
-  void reify_mutex(string file_name);
   static SharedMap* unwrap(v8::Local<v8::Object>);
-  static NAN_METHOD(Create);
+  static NAN_PROPERTY_SETTER(PropSetter);
+  static NAN_PROPERTY_GETTER(PropGetter);
+  static NAN_PROPERTY_QUERY(PropQuery);
+  static NAN_PROPERTY_ENUMERATOR(PropEnumerator);
+  static NAN_PROPERTY_DELETER(PropDeleter);
+  static NAN_INDEX_GETTER(IndexGetter);
+  static NAN_INDEX_SETTER(IndexSetter);
+  static NAN_INDEX_QUERY(IndexQuery);
+  static NAN_INDEX_DELETER(IndexDeleter);
+  static NAN_INDEX_ENUMERATOR(IndexEnumerator);
+  static NAN_METHOD(inspect);
+  static v8::Local<v8::Function> init_methods(v8::Local<v8::FunctionTemplate> f_tpl);
+  static inline Nan::Persistent<v8::Function> & constructor() {
+    static Nan::Persistent<v8::Function> my_constructor;
+    return my_constructor;
+  }
+};
+
+class SharedMapControl : public Nan::ObjectWrap {
+public:
+  SharedMapControl(SharedMap* m) : map{m} {};
+  static void Init(Nan::ADDON_REGISTER_FUNCTION_ARGS_TYPE exports, ADDON_REGISTER_FUNCTION_ARGS2_TYPE module);
+private:
+  SharedMap *map;
+
+  static SharedMapControl* unwrap(v8::Local<v8::Object>);
   static NAN_METHOD(Open);
   static NAN_METHOD(Close);
   static NAN_METHOD(isClosed);
@@ -153,19 +199,7 @@ private:
   static NAN_METHOD(max_bucket_count);
   static NAN_METHOD(load_factor);
   static NAN_METHOD(max_load_factor);
-  static NAN_METHOD(inspect);
   static NAN_METHOD(remove_shared_mutex);
-  static NAN_PROPERTY_SETTER(PropSetter);
-  static NAN_PROPERTY_GETTER(PropGetter);
-  static NAN_PROPERTY_QUERY(PropQuery);
-  static NAN_PROPERTY_ENUMERATOR(PropEnumerator);
-  static NAN_PROPERTY_DELETER(PropDeleter);
-  static NAN_INDEX_GETTER(IndexGetter);
-  static NAN_INDEX_SETTER(IndexSetter);
-  static NAN_INDEX_QUERY(IndexQuery);
-  static NAN_INDEX_DELETER(IndexDeleter);
-  static NAN_INDEX_ENUMERATOR(IndexEnumerator);
-
   static v8::Local<v8::Function> init_methods(v8::Local<v8::FunctionTemplate> f_tpl);
   static inline Nan::Persistent<v8::Function> & constructor() {
     static Nan::Persistent<v8::Function> my_constructor;
@@ -223,6 +257,14 @@ Cell::Cell(const Cell &cell) {
   }
 }
 
+SharedMapControl* SharedMapControl::unwrap(v8::Local<v8::Object> thisObj) {
+  if (thisObj->InternalFieldCount() != 1 || thisObj->IsUndefined()) {
+    Nan::ThrowError("Not actually an mmap object!");
+    return NULL;
+  }
+  return Nan::ObjectWrap::Unwrap<SharedMapControl>(thisObj);
+}
+
 SharedMap* SharedMap::unwrap(v8::Local<v8::Object> thisObj) {
   if (thisObj->InternalFieldCount() != 1 || thisObj->IsUndefined()) {
     Nan::ThrowError("Not actually an mmap object!");
@@ -233,13 +275,13 @@ SharedMap* SharedMap::unwrap(v8::Local<v8::Object> thisObj) {
 
 NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
   auto self = unwrap(info.This());
-  if (!self)
+  if (!self) {
     return;
+  }
   if (self->readonly) {
     Nan::ThrowError("Read-only object.");
     return;
   }
-
   if (self->closed) {
     Nan::ThrowError("Cannot write to closed object.");
     return;
@@ -284,6 +326,7 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
         auto pair = self->property_map->insert({ *string_key, *c });
         if (!pair.second) {
           self->property_map->erase(*string_key);
+
           self->property_map->insert({ *string_key, *c });
         }
         break;
@@ -333,7 +376,7 @@ NAN_METHOD(SharedMap::inspect) {
 
 NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
   v8::String::Utf8Value src(property);
-  if (property->IsSymbol() || string(*data) == "prototype") {
+  if (property->IsSymbol() || string(*src) == "prototype") {
     return;
   }
 
@@ -449,11 +492,11 @@ NAN_PROPERTY_ENUMERATOR(SharedMap::PropEnumerator) {
   info.GetReturnValue().Set(arr);
 }
 
-#define INFO_METHOD(name, type, object) NAN_METHOD(SharedMap::name) { \
+#define INFO_METHOD(name, type, object) NAN_METHOD(SharedMapControl::name) { \
   auto self = unwrap(info.This());                                  \
   if (!self) return; \
-  bip::sharable_lock<upgradable_mutex_type> lock(*self->mutex); \
-  info.GetReturnValue().Set((type)self->object->name()); \
+  bip::sharable_lock<upgradable_mutex_type> lock(*self->map->mutex); \
+  info.GetReturnValue().Set((type)self->map->object->name()); \
 }
 
 INFO_METHOD(get_free_memory, uint32_t, map_seg)
@@ -463,11 +506,11 @@ INFO_METHOD(max_bucket_count, uint32_t, property_map)
 INFO_METHOD(load_factor, float, property_map)
 INFO_METHOD(max_load_factor, float, property_map)
 
-NAN_METHOD(SharedMap::remove_shared_mutex) {
+NAN_METHOD(SharedMapControl::remove_shared_mutex) {
   auto self = unwrap(info.This());
   if (!self)
     return;
-  string mutex_name(self->file_name);
+  string mutex_name(self->map->file_name);
   replace( mutex_name.begin(), mutex_name.end(), '/', '-');
   bip::shared_memory_object::remove(mutex_name.c_str());
 }
@@ -518,6 +561,7 @@ void SharedMap::reify_mutex(string file_name) {
   }  
 }
 
+/*
 NAN_METHOD(SharedMap::Create) {
   if (!info.IsConstructCall()) {
     Nan::ThrowError("Create must be called as a constructor.");
@@ -566,45 +610,87 @@ NAN_METHOD(SharedMap::Create) {
   d->Wrap(info.This());
   info.GetReturnValue().Set(info.This());
 }
+*/
 
-NAN_METHOD(SharedMap::Open) {
+NAN_METHOD(SharedMapControl::Open) {
+  v8::Local<v8::Object> thisObject;
   if (!info.IsConstructCall()) {
-    Nan::ThrowError("Open must be called as a constructor.");
+    const int argc = 4;
+    v8::Local<v8::Value> argv[argc] = {info[0], info[1], info[2], info[3]};
+    v8::Local<v8::Function> cons = Nan::New(constructor());
+    info.GetReturnValue().Set(cons->NewInstance(argc, argv));
     return;
   }
-
+  
   Nan::Utf8String filename(info[0]->ToString());
-  SharedMap *d = new SharedMap();
-
+  bool createFile = false;
   struct stat buf;
   int s = stat(*filename, &buf);
-  if (!S_ISREG(buf.st_mode)) {
-    ostringstream error_stream;
-    error_stream << *filename;
-    if (s) {
-      error_stream << " does not exist.";
-    } else {
-      error_stream << " is not a regular file.";
+  if (s == 0) {
+    if (!S_ISREG(buf.st_mode)) {
+      ostringstream error_stream;
+      error_stream << *filename << " is not a regular file.";
+      Nan::ThrowError(error_stream.str().c_str());
+      return;
     }
-    Nan::ThrowError(error_stream.str().c_str());
-    return;
+  } else { // File doesn't exist, create!
+    createFile = true;
   }
 
+  size_t max_file_size = (int)info[1]->Int32Value();
+  size_t initial_file_size = (int)info[2]->Int32Value();
+  size_t initial_bucket_count = (int)info[3]->Int32Value();
+  if (initial_file_size == 0) {
+    initial_file_size = DEFAULT_FILE_SIZE;
+  }
+  // Don't open it too small.
+  if (initial_file_size < MINIMUM_FILE_SIZE) {
+    initial_file_size = MINIMUM_FILE_SIZE;
+    max_file_size = max(initial_file_size, max_file_size);
+  }
+  if (max_file_size == 0) {
+    max_file_size = DEFAULT_MAX_SIZE;
+  }
+  // Default to 1024 buckets
+  if (initial_bucket_count == 0) {
+    initial_bucket_count = 1024;
+  }
+    
+  SharedMap *d = new SharedMap();
+  SharedMapControl *c = new SharedMapControl(d);
+
   try {
-    d->map_seg = new bip::managed_mapped_file(bip::open_read_only, string(*filename).c_str());
-    auto find_map = d->map_seg->find<PropertyHash>("properties");
-    d->property_map = find_map.first;
+    if (createFile) {
+      d->map_seg = new bip::managed_mapped_file(bip::create_only,string(*filename).c_str(), initial_file_size);
+      d->property_map = d->map_seg->find_or_construct<PropertyHash>("properties")
+        (initial_bucket_count, hasher(), s_equal_to(), d->map_seg->get_segment_manager());
+      d->file_size = initial_file_size;
+      d->max_file_size = max_file_size;
+    } else {
+      d->map_seg = new bip::managed_mapped_file(bip::open_only, string(*filename).c_str());
+      auto find_map = d->map_seg->find<PropertyHash>("properties");
+      d->property_map = find_map.first;
+    }
   } catch(bip::interprocess_exception &ex){
     ostringstream error_stream;
     error_stream << "Can't open file " << *filename << ": " << ex.what();
     Nan::ThrowError(error_stream.str().c_str());
     return;
   }
+  
   d->reify_mutex(*filename);
-  d->readonly = true;
+  // d->readonly = true;
   d->setFilename(*filename);
-  d->Wrap(info.This());
-  info.GetReturnValue().Set(info.This());
+
+  c->Wrap(info.This());
+  auto map_obj = SharedMap::NewInstance();
+    
+  d->Wrap(map_obj);
+  auto ret_obj = Nan::New<v8::Object>();
+  Nan::Set(ret_obj, Nan::New("control").ToLocalChecked(), info.This());
+  Nan::Set(ret_obj, Nan::New("obj").ToLocalChecked(), map_obj);
+    
+  info.GetReturnValue().Set(ret_obj);
 }
 
 void SharedMap::setFilename(string fn_string) {
@@ -632,38 +718,38 @@ void SharedMap::grow_private(size_t size) {
 }
 
 
-NAN_METHOD(SharedMap::Close) {
+NAN_METHOD(SharedMapControl::Close) {
   auto self = unwrap(info.This());
   if (!self)
     return;
-  bip::scoped_lock<upgradable_mutex_type> lock(*self->mutex);
-  if (self->closed) {
+  bip::scoped_lock<upgradable_mutex_type> lock(*self->map->mutex);
+  if (self->map->closed) {
     Nan::ThrowError("Attempted to close a closed object.");
     return;
   }
 
-  bip::managed_mapped_file::shrink_to_fit(self->file_name.c_str());
-  self->map_seg->flush();
-  delete self->map_seg;
-  self->map_seg = NULL;
-  self->closed = true;
+  bip::managed_mapped_file::shrink_to_fit(self->map->file_name.c_str());
+  self->map->map_seg->flush();
+  delete self->map->map_seg;
+  self->map->map_seg = NULL;
+  self->map->closed = true;
 }
 
-NAN_METHOD(SharedMap::isClosed) {
+NAN_METHOD(SharedMapControl::isClosed) {
   auto self = unwrap(info.This());
   if (!self)
     return;
-  info.GetReturnValue().Set(self->closed);
+  info.GetReturnValue().Set(self->map->closed);
 }
 
-NAN_METHOD(SharedMap::isOpen) {
+NAN_METHOD(SharedMapControl::isOpen) {
   auto self = unwrap(info.This());
   if (!self)
     return;
-  info.GetReturnValue().Set(!self->closed);
+  info.GetReturnValue().Set(!self->map->closed);
 }
 
-NAN_METHOD(SharedMap::isData) {
+NAN_METHOD(SharedMapControl::isData) {
   auto value = info[0];
   if (value->IsFunction()) {
     bool success = Nan::GetRealNamedProperty(value->ToObject(),
@@ -680,16 +766,16 @@ NAN_METHOD(SharedMap::isData) {
   info.GetReturnValue().Set(result);
 }
 
-NAN_METHOD(SharedMap::writeUnlock) {
+NAN_METHOD(SharedMapControl::writeUnlock) {
   auto self = unwrap(info[0].As<v8::Object>());
   if (!self)
     return;
-  self->inWriteLock = false;
-  self->mutex->unlock();
+  self->map->inWriteLock = false;
+  self->map->mutex->unlock();
   LOCKINFO("5 SUCCESS");
 }
 
-NAN_METHOD(SharedMap::writeLock) {
+NAN_METHOD(SharedMapControl::writeLock) {
   auto self = unwrap(info.This());
   if (!self)
     return;
@@ -702,13 +788,13 @@ NAN_METHOD(SharedMap::writeLock) {
   // Send it as callback.
   v8::Local<v8::Value> argv[1] = {boundFunc};
 
-  self->mutex->lock();
-  self->inWriteLock = true;
+  self->map->mutex->lock();
+  self->map->inWriteLock = true;
   LOCKINFO("5");
   callback->Call(1, argv);
 }
 
-v8::Local<v8::Function> SharedMap::init_methods(v8::Local<v8::FunctionTemplate> f_tpl) {
+v8::Local<v8::Function> SharedMapControl::init_methods(v8::Local<v8::FunctionTemplate> f_tpl) {
   Nan::SetPrototypeMethod(f_tpl, "close", Close);
   Nan::SetPrototypeMethod(f_tpl, "isClosed", isClosed);
   Nan::SetPrototypeMethod(f_tpl, "isOpen", isOpen);
@@ -721,34 +807,25 @@ v8::Local<v8::Function> SharedMap::init_methods(v8::Local<v8::FunctionTemplate> 
   Nan::SetPrototypeMethod(f_tpl, "max_bucket_count", max_bucket_count);
   Nan::SetPrototypeMethod(f_tpl, "load_factor", load_factor);
   Nan::SetPrototypeMethod(f_tpl, "max_load_factor", max_load_factor);
-
-  auto proto = f_tpl->PrototypeTemplate();
-  Nan::SetNamedPropertyHandler(proto, PropGetter, PropSetter, PropQuery, PropDeleter, PropEnumerator,
-                               Nan::New<v8::String>("prototype").ToLocalChecked());
-
-  auto inst = f_tpl->InstanceTemplate();
-  inst->SetInternalFieldCount(1);
-  Nan::SetNamedPropertyHandler(inst, PropGetter, PropSetter, PropQuery, PropDeleter, PropEnumerator,
-                               Nan::New<v8::String>("instance").ToLocalChecked());
-  Nan::SetIndexedPropertyHandler(inst, IndexGetter, IndexSetter, IndexQuery, IndexDeleter, IndexEnumerator,
-                                 Nan::New<v8::String>("instance").ToLocalChecked());
+  f_tpl->InstanceTemplate()->SetInternalFieldCount(1);
   auto fun = Nan::GetFunction(f_tpl).ToLocalChecked();
   constructor().Reset(fun);
   return fun;
 }
 
-NAN_MODULE_INIT(SharedMap::Init) {
-  // The mmap creator class
-  v8::Local<v8::FunctionTemplate> create_tpl = Nan::New<v8::FunctionTemplate>(Create);
-  create_tpl->SetClassName(Nan::New("CreateMmap").ToLocalChecked());
-  auto create_fun = init_methods(create_tpl);
-  Nan::Set(target, Nan::New("Create").ToLocalChecked(), create_fun);
-
+void SharedMapControl::Init(Nan::ADDON_REGISTER_FUNCTION_ARGS_TYPE exports, ADDON_REGISTER_FUNCTION_ARGS2_TYPE module) {
+  SharedMap::Init(exports);
   // The mmap opener class
-  v8::Local<v8::FunctionTemplate> open_tpl = Nan::New<v8::FunctionTemplate>(Open);
-  open_tpl->SetClassName(Nan::New("OpenMmap").ToLocalChecked());
-  auto open_fun = init_methods(open_tpl);
-  Nan::Set(target, Nan::New("Open").ToLocalChecked(), open_fun);
+  v8::Local<v8::FunctionTemplate> tmpl = Nan::New<v8::FunctionTemplate>(Open);
+  tmpl->SetClassName(Nan::New("MmapObject").ToLocalChecked());
+  auto open_fun = init_methods(tmpl);
+  Nan::Set(module.As<v8::Object>(), Nan::New("exports").ToLocalChecked(), open_fun);
 }
 
-NODE_MODULE(mmap_object, SharedMap::Init)
+NODE_MODULE(mmap_object, SharedMapControl::Init)
+
+
+// Todo: look for self->map-> refs and see if they can be
+// encapsulated in the SharedMap directly.
+
+// Deal with read-only mode.

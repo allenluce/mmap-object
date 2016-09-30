@@ -279,36 +279,50 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
   }
   try {
     Cell *c;
+    if (value->IsString()) {
+      v8::String::Utf8Value data(value);
+      data_length += data.length();
+    } else if (value->IsNumber()) {
+      data_length += sizeof(double);
+    } else {
+      Nan::ThrowError("Value must be a string or number.");
+      return;
+    }
+    v8::String::Utf8Value prop(property);
+    data_length += prop.length();
+
+    cout << "Data len: " << data_length << endl;
     while(true) {
       try {
         if (value->IsString()) {
           v8::String::Utf8Value data(value);
-          data_length += data.length();
+          cout << "INNIT1" << endl;
           char_allocator allocer(self->map_seg->get_segment_manager());
+          cout << "INNIT2" << endl;
           c = new Cell(string(*data).c_str(), allocer);
+          cout << "INNIT3" << endl;
         } else if (value->IsNumber()) {
-          data_length += sizeof(double);
           c = new Cell(Nan::To<double>(value).FromJust());
-        } else {
-          Nan::ThrowError("Value must be a string or number.");
-          return;
         }
 
-        v8::String::Utf8Value prop(property);
-        data_length += prop.length();
         shared_string *string_key;
+        cout << "WHERIT1" << endl;
         char_allocator allocer(self->map_seg->get_segment_manager());
+        cout << "WHERIT1" << endl;
         string_key = new shared_string(string(*prop).c_str(), allocer);
+        cout << "WHERIT1" << endl;
         auto pair = self->property_map->insert({ *string_key, *c });
+        cout << "WHERIT1" << endl;
         if (!pair.second) {
           self->property_map->erase(*string_key);
-
           self->property_map->insert({ *string_key, *c });
         }
         break;
       } catch(length_error) {
+        cout << "LEN" << endl;
         self->grow_private(data_length * 2);
       } catch(bip::bad_alloc) {
+        cout << "BADALLOC" << endl;
         self->grow_private(data_length * 2);
       }
     }
@@ -528,6 +542,10 @@ NAN_METHOD(SharedMapControl::Open) {
   }
   
   Nan::Utf8String filename(info[0]->ToString());
+  Nan::Utf8String mode(info[1]->ToString());
+
+  bool ro = string(*mode) == "ro";
+  
   bool createFile = false;
   struct stat buf;
   int s = stat(*filename, &buf);
@@ -538,13 +556,19 @@ NAN_METHOD(SharedMapControl::Open) {
       Nan::ThrowError(error_stream.str().c_str());
       return;
     }
-  } else { // File doesn't exist, create!
+  } else { // File doesn't exist
+    if (ro) {
+      ostringstream error_stream;
+      error_stream << *filename << " does not exist, cannot open read-only.";
+      Nan::ThrowError(error_stream.str().c_str());
+      return;
+    }      
     createFile = true;
   }
 
-  size_t max_file_size = (int)info[1]->Int32Value();
-  size_t initial_file_size = (int)info[2]->Int32Value();
-  size_t initial_bucket_count = (int)info[3]->Int32Value();
+  size_t max_file_size = (int)info[2]->Int32Value();
+  size_t initial_file_size = (int)info[3]->Int32Value();
+  size_t initial_bucket_count = (int)info[4]->Int32Value();
   if (initial_file_size == 0) {
     initial_file_size = DEFAULT_FILE_SIZE;
   }
@@ -572,7 +596,11 @@ NAN_METHOD(SharedMapControl::Open) {
       d->file_size = initial_file_size;
       d->max_file_size = max_file_size;
     } else {
-      d->map_seg = new bip::managed_mapped_file(bip::open_only, string(*filename).c_str());
+      if (ro) {
+        d->map_seg = new bip::managed_mapped_file(bip::open_read_only, string(*filename).c_str());
+      } else {
+        d->map_seg = new bip::managed_mapped_file(bip::open_only, string(*filename).c_str());
+      }
       auto find_map = d->map_seg->find<PropertyHash>("properties");
       d->property_map = find_map.first;
       d->file_size = d->map_seg->get_size();
@@ -586,7 +614,7 @@ NAN_METHOD(SharedMapControl::Open) {
   }
   
   d->reify_mutex(*filename);
-  // d->readonly = true;
+  d->readonly = ro;
   d->setFilename(*filename);
 
   c->Wrap(info.This());
@@ -612,6 +640,7 @@ void SharedMap::grow(size_t size) {
 }
 
 void SharedMap::grow_private(size_t size) {
+  cout << "FS: " << file_size << " MFS: " << max_file_size << endl;
   file_size += size;
   if (file_size > max_file_size) {
     throw FileTooLarge();
@@ -619,6 +648,7 @@ void SharedMap::grow_private(size_t size) {
   map_seg->flush();
   delete map_seg;
   bip::managed_mapped_file::grow(file_name.c_str(), size);
+  cout << "Growing to " << size << endl;
   map_seg = new bip::managed_mapped_file(bip::open_only, file_name.c_str());
   property_map = map_seg->find<PropertyHash>("properties").first;
   closed = false;
@@ -718,3 +748,9 @@ NODE_MODULE(mmap_object, SharedMapControl::Init)
 // encapsulated in the SharedMap directly.
 
 // Deal with read-only mode.
+
+
+// When growing, NOBODY CAN BE MAPPING THE FILE!
+// Have something that'll keep track of the file generation.
+// Grow will increment it.
+// When the generation incremnts, close and reopen the file.

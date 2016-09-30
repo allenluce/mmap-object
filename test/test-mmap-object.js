@@ -126,16 +126,18 @@ describe('mmap-object', function () {
 
     it('grows small files', function () {
       const filename = path.join(this.dir, 'grow_me')
-      const m = MMO(filename, 1000000, 1)
+      const m = MMO(filename, 'rw', 1000000, 1)
       expect(fs.statSync(filename)['size']).to.equal(1024)
       m.obj['key'] = new Array(BigKeySize).join('big')
       expect(fs.statSync(filename)['size']).to.above(1024)
     })
 
-    it('bombs when file gets too big', function () {
+    it.only('bombs when file gets too big', function () {
       const filename = path.join(this.dir, 'bomb_me')
-      const m = MMO(filename, 20, 1, 4)
+      const m = MMO(filename, 'rw', 20, 1, 4)
+      console.log("BEFORE")
       m.obj['key'] = new Array(BigKeySize).join('big')
+      console.log("AFTER")
       expect(function () {
         m.obj['otherkey'] = new Array(BigKeySize).join('big')
       }).to.throw(/File grew too large./)
@@ -170,7 +172,7 @@ describe('mmap-object', function () {
     describe('file with some values', function () {
       // These are dependent && done in sequence.
       before(function () {
-        this.m = MMO(path.join(this.dir, 'bucket_counter'), 1000, 5, 4)
+        this.m = MMO(path.join(this.dir, 'bucket_counter'), 'rw', 1000, 5, 4)
       })
 
       it('bucket_count', function () {

@@ -375,6 +375,8 @@ NAN_METHOD(SharedMap::inspect) {
 }
 
 NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
+  if (property->IsSymbol())
+    return;
   v8::String::Utf8Value src(property);
   if (property->IsSymbol() || string(*src) == "prototype") {
     return;
@@ -561,57 +563,6 @@ void SharedMap::reify_mutex(string file_name) {
   }  
 }
 
-/*
-NAN_METHOD(SharedMap::Create) {
-  if (!info.IsConstructCall()) {
-    Nan::ThrowError("Create must be called as a constructor.");
-    return;
-  }
-  Nan::Utf8String filename(info[0]->ToString());
-  size_t file_size = (int)info[1]->Int32Value();
-  file_size *= 1024;
-  size_t initial_bucket_count = (int)info[2]->Int32Value();
-  size_t max_file_size = (int)info[3]->Int32Value();
-  max_file_size *= 1024;
-  SharedMap *d = new SharedMap();
-  if (file_size == 0) {
-    file_size = DEFAULT_FILE_SIZE;
-  }
-  // Don't open it too small.
-  if (file_size < MINIMUM_FILE_SIZE) {
-    file_size = 500;
-    max_file_size = max(file_size, max_file_size);
-  }
-  if (max_file_size == 0) {
-    max_file_size = DEFAULT_MAX_SIZE;
-  }
-
-  // Default to 1024 buckets
-  if (initial_bucket_count == 0) {
-    initial_bucket_count = 1024;
-  }
-
-  try {
-    d->map_seg = new bip::managed_mapped_file(bip::open_or_create,string(*filename).c_str(), file_size);
-    d->property_map = d->map_seg->find_or_construct<PropertyHash>("properties")
-      (initial_bucket_count, hasher(), s_equal_to(), d->map_seg->get_segment_manager());
-  } catch(bip::interprocess_exception &ex){
-    ostringstream error_stream;
-    error_stream << "Can't open file " << *filename << ": " << ex.what();
-    Nan::ThrowError(error_stream.str().c_str());
-    return;
-  }
-
-  d->reify_mutex(*filename);
-  d->readonly = false;
-  d->setFilename(*filename);
-  d->file_size = file_size;
-  d->max_file_size = max_file_size;
-  d->Wrap(info.This());
-  info.GetReturnValue().Set(info.This());
-}
-*/
-
 NAN_METHOD(SharedMapControl::Open) {
   v8::Local<v8::Object> thisObject;
   if (!info.IsConstructCall()) {
@@ -670,6 +621,8 @@ NAN_METHOD(SharedMapControl::Open) {
       d->map_seg = new bip::managed_mapped_file(bip::open_only, string(*filename).c_str());
       auto find_map = d->map_seg->find<PropertyHash>("properties");
       d->property_map = find_map.first;
+      d->file_size = d->map_seg->get_size();
+      d->max_file_size = max_file_size;
     }
   } catch(bip::interprocess_exception &ex){
     ostringstream error_stream;

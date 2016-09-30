@@ -138,6 +138,7 @@ private:
   void grow_private(size_t);
   void setFilename(string);
   void reify_mutex(string file_name);
+  static SharedMap* unwrap(v8::Local<v8::Object>);
   static NAN_METHOD(Create);
   static NAN_METHOD(Open);
   static NAN_METHOD(Close);
@@ -222,8 +223,18 @@ Cell::Cell(const Cell &cell) {
   }
 }
 
+SharedMap* SharedMap::unwrap(v8::Local<v8::Object> thisObj) {
+  if (thisObj->InternalFieldCount() != 1 || thisObj->IsUndefined()) {
+    Nan::ThrowError("Not actually an mmap object!");
+    return NULL;
+  }
+  return Nan::ObjectWrap::Unwrap<SharedMap>(thisObj);
+}
+
 NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
-  auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
+  auto self = unwrap(info.This());
+  if (!self)
+    return;
   if (self->readonly) {
     Nan::ThrowError("Read-only object.");
     return;
@@ -321,7 +332,6 @@ NAN_METHOD(SharedMap::inspect) {
 }
 
 NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
-  v8::String::Utf8Value data(info.Data());
   v8::String::Utf8Value src(property);
   if (property->IsSymbol() || string(*data) == "prototype") {
     return;
@@ -339,7 +349,10 @@ NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
     return;
   }
 
-  auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
+  auto self = unwrap(info.This());
+  if (!self)
+    return;
+
   if (self->closed) {
     Nan::ThrowError("Cannot read from closed object.");
     return;
@@ -369,7 +382,9 @@ NAN_PROPERTY_QUERY(SharedMap::PropQuery) {
     info.GetReturnValue().Set(Nan::New<v8::Integer>(v8::ReadOnly | v8::DontEnum | v8::DontDelete));
     return;
   }
-  auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
+  auto self = unwrap(info.This());
+  if (!self)
+    return;
 
   if (self->readonly) {
     info.GetReturnValue().Set(Nan::New<v8::Integer>(v8::ReadOnly | v8::DontDelete));
@@ -392,7 +407,9 @@ NAN_PROPERTY_DELETER(SharedMap::PropDeleter) {
     return;
   }
   
-  auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
+  auto self = unwrap(info.This());
+  if (!self)
+    return;
 
   if (self->readonly) {
     Nan::ThrowError("Cannot delete from read-only object.");
@@ -415,7 +432,9 @@ NAN_PROPERTY_DELETER(SharedMap::PropDeleter) {
 
 NAN_PROPERTY_ENUMERATOR(SharedMap::PropEnumerator) {
   v8::Local<v8::Array> arr = Nan::New<v8::Array>();
-  auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
+  auto self = unwrap(info.This());
+  if (!self)
+    return;
 
   if (self->closed) {
     info.GetReturnValue().Set(Nan::New<v8::Array>(v8::None));
@@ -431,7 +450,8 @@ NAN_PROPERTY_ENUMERATOR(SharedMap::PropEnumerator) {
 }
 
 #define INFO_METHOD(name, type, object) NAN_METHOD(SharedMap::name) { \
-  auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This()); \
+  auto self = unwrap(info.This());                                  \
+  if (!self) return; \
   bip::sharable_lock<upgradable_mutex_type> lock(*self->mutex); \
   info.GetReturnValue().Set((type)self->object->name()); \
 }
@@ -444,7 +464,9 @@ INFO_METHOD(load_factor, float, property_map)
 INFO_METHOD(max_load_factor, float, property_map)
 
 NAN_METHOD(SharedMap::remove_shared_mutex) {
-  auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
+  auto self = unwrap(info.This());
+  if (!self)
+    return;
   string mutex_name(self->file_name);
   replace( mutex_name.begin(), mutex_name.end(), '/', '-');
   bip::shared_memory_object::remove(mutex_name.c_str());
@@ -611,7 +633,9 @@ void SharedMap::grow_private(size_t size) {
 
 
 NAN_METHOD(SharedMap::Close) {
-  auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
+  auto self = unwrap(info.This());
+  if (!self)
+    return;
   bip::scoped_lock<upgradable_mutex_type> lock(*self->mutex);
   if (self->closed) {
     Nan::ThrowError("Attempted to close a closed object.");
@@ -626,12 +650,16 @@ NAN_METHOD(SharedMap::Close) {
 }
 
 NAN_METHOD(SharedMap::isClosed) {
-  auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
+  auto self = unwrap(info.This());
+  if (!self)
+    return;
   info.GetReturnValue().Set(self->closed);
 }
 
 NAN_METHOD(SharedMap::isOpen) {
-  auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
+  auto self = unwrap(info.This());
+  if (!self)
+    return;
   info.GetReturnValue().Set(!self->closed);
 }
 
@@ -653,15 +681,18 @@ NAN_METHOD(SharedMap::isData) {
 }
 
 NAN_METHOD(SharedMap::writeUnlock) {
-  auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info[0].As<v8::Object>());
+  auto self = unwrap(info[0].As<v8::Object>());
+  if (!self)
+    return;
   self->inWriteLock = false;
   self->mutex->unlock();
   LOCKINFO("5 SUCCESS");
 }
 
-
 NAN_METHOD(SharedMap::writeLock) {
-  auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
+  auto self = unwrap(info.This());
+  if (!self)
+    return;
   auto callback = new Nan::Callback(info[0].As<v8::Function>());
   auto func = Nan::New<v8::Function>(writeUnlock);
   // Bind function to this object

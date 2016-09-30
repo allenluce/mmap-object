@@ -190,7 +190,6 @@ private:
   static NAN_METHOD(Close);
   static NAN_METHOD(isClosed);
   static NAN_METHOD(isOpen);
-  static NAN_METHOD(isData);
   static NAN_METHOD(writeLock);
   static NAN_METHOD(writeUnlock);
   static NAN_METHOD(get_free_memory);
@@ -206,29 +205,6 @@ private:
     return my_constructor;
   }
 };
-
-
-bool isMethod(string name) {
-  string methods[] = {
-    "isClosed",
-    "isOpen",
-    "close",
-    "valueOf",
-    "toString",
-    "close",
-    "get_free_memory",
-    "get_size",
-    "bucket_count",
-    "max_bucket_count",
-    "load_factor",
-    "max_load_factor",
-    "isData",
-    "remove_shared_mutex"
-  };
-  set<string> method_set(methods, methods + sizeof(methods) / sizeof(methods[0]));
-
-  return method_set.find(name) != method_set.end();
-}
 
 const char *Cell::c_str() {
   if (type() != STRING_TYPE)
@@ -378,21 +354,8 @@ NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
   if (property->IsSymbol())
     return;
   v8::String::Utf8Value src(property);
-  if (property->IsSymbol() || string(*src) == "prototype") {
+  if (property->IsSymbol() || string(*src) == "prototype")
     return;
-  }
-
-  if (string(*src) == "inspect") {
-    v8::Local<v8::FunctionTemplate> tmpl = Nan::New<v8::FunctionTemplate>(inspect);
-    v8::Local<v8::Function> fn = Nan::GetFunction(tmpl).ToLocalChecked();
-    fn->SetName(Nan::New("inspect").ToLocalChecked());
-    info.GetReturnValue().Set(fn);
-    return;
-  }
-
-  if (!property->IsNull() && isMethod(string(*src))) {
-    return;
-  }
 
   auto self = unwrap(info.This());
   if (!self)
@@ -423,10 +386,6 @@ NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
 NAN_PROPERTY_QUERY(SharedMap::PropQuery) {
   v8::String::Utf8Value src(property);
 
-  if (isMethod(string(*src))) {
-    info.GetReturnValue().Set(Nan::New<v8::Integer>(v8::ReadOnly | v8::DontEnum | v8::DontDelete));
-    return;
-  }
   auto self = unwrap(info.This());
   if (!self)
     return;
@@ -447,11 +406,6 @@ NAN_PROPERTY_DELETER(SharedMap::PropDeleter) {
   
   v8::String::Utf8Value src(property);
 
-  if (isMethod(string(*src))) {
-    info.GetReturnValue().Set(Nan::New<v8::Boolean>(v8::None));
-    return;
-  }
-  
   auto self = unwrap(info.This());
   if (!self)
     return;
@@ -702,23 +656,6 @@ NAN_METHOD(SharedMapControl::isOpen) {
   info.GetReturnValue().Set(!self->map->closed);
 }
 
-NAN_METHOD(SharedMapControl::isData) {
-  auto value = info[0];
-  if (value->IsFunction()) {
-    bool success = Nan::GetRealNamedProperty(value->ToObject(),
-                                             Nan::New("name").ToLocalChecked()
-                                             ).ToLocal(&value);
-    if (!success) {
-      value = info[0];
-    }
-  }
-  bool result = true;
-  if (value->IsString()) {
-    result = !isMethod(*Nan::Utf8String(value->ToString()));
-  }
-  info.GetReturnValue().Set(result);
-}
-
 NAN_METHOD(SharedMapControl::writeUnlock) {
   auto self = unwrap(info[0].As<v8::Object>());
   if (!self)
@@ -751,7 +688,6 @@ v8::Local<v8::Function> SharedMapControl::init_methods(v8::Local<v8::FunctionTem
   Nan::SetPrototypeMethod(f_tpl, "close", Close);
   Nan::SetPrototypeMethod(f_tpl, "isClosed", isClosed);
   Nan::SetPrototypeMethod(f_tpl, "isOpen", isOpen);
-  Nan::SetPrototypeMethod(f_tpl, "isData", isData);
   Nan::SetPrototypeMethod(f_tpl, "writeLock", writeLock);
   Nan::SetPrototypeMethod(f_tpl, "remove_shared_mutex", remove_shared_mutex);
   Nan::SetPrototypeMethod(f_tpl, "get_free_memory", get_free_memory);

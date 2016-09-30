@@ -7,35 +7,39 @@ processes.
 
 This module maps Javascript objects into shared memory for
 simultaneous access by different Node processes running on the same
-machine. Shared memory is loaded
-via [mmap](https://en.wikipedia.org/wiki/Mmap).  Object access is
-mediated by Boost's unordered map class so object property access are
-speedy.
+machine. Shared memory is loaded via
+[mmap](https://en.wikipedia.org/wiki/Mmap).  Object access is mediated
+by Boost's unordered map class for speedy accesses.
 
-Data is lazily loaded piece-by-piece as needed so opening even a huge
-file takes no time at all.
+Data is lazily loaded as needed so opening even a huge file takes no
+time at all.
 
-This uses shared memory to mediate access to the objects so you CANNOT
-share across a mounted volume (NFS, SMB, etc).
-
+```js
 const MMO = require('mmap-object')
-let {control, obj} = new MMO('filename') // Will create if it doesn't exist
+let {control, obj} = new MMO('shared_file') // Creates the file
 
-obj.new_property = 'what'
 obj[1] = 'hey'
+obj.new_property = 'what'
+obj['new_key'] = 'now'
+delete obj['new_key']
 
 control.close()
+```
 
-shared_object['new_key'] = 'some value'
-shared_object.new_property = 'some other value'
+Read it from another process:
 
-// Erase a key
-delete shared_object['new_key']
+```js
+const MMO = require('mmap-object')
+let {control, obj} = new MMO('shared_file') // Creates the file
 
-shared_object.close()
+for (key of obj) {
+obj[1] = 'hey'
+obj.new_property = 'what'
+obj['new_key'] = 'now'
+delete obj['new_key']
 
-// Read a file
-const read_only_shared_object = new Shared.Open('filename')
+control.close()
+```
 
 ## Performance mode
 
@@ -81,7 +85,7 @@ console.log(`My value is ${read_only_shared_object.new_key}`)
 
 ## API
 
-### MMO(path, [max_file_size], [initial_file_size], [initial_bucket_count])
+### MMO(path, [mode], [max_file_size], [initial_file_size], [initial_bucket_count])
 
 Opens an existing file or creates a new file mapped into shared
 memory. Returns an object that provides access to the shared
@@ -90,6 +94,7 @@ memory. Throws an exception on error.
 __Arguments__
 
 * `path` - The path of the file to create
+* `mode` - 'rw' for read-write mode (the default), 'ro' for read-only mode.
 * `max_file_size` - *Optional* The largest the file is allowed to
   grow in kilobytes. If data is added beyond this limit, an exception is thrown.
   Defaults to 5 gigabytes.
@@ -109,30 +114,16 @@ __Example__
 const obj = new Shared.Create("/tmp/sharedmem", 500, 300)
 ```
 
-### MMO.RO(path)
-
-Maps an existing file into shared memory. Returns an object that
-provides read-only access to the object contained in the file. Throws
-an exception on error. Any number of processes can open the same file
-but only a single copy will reside in memory. Uses `mmap` under the
-covers, so only those parts of the file that are actually accessed
-will be loaded.
-
 A file can be opened read-only only if no processes have it currently
 opened read-write. Once opened read-only, it can no longer be opened
-on a read-write basis. Any attempts to set attributes on the returned
-object will fail.
+on a read-write basis. Any attempts to set properties on a read-only
+object will fail with an exception.
 
-__Arguments__
 
-* `path` - The path of the file to open
+## Control
 
-__Example__
-
-```js
-// Open up that shared file
-const obj = MMO.RO("/tmp/sharedmem").obj
-```
+The returned `control` object has several methods for manipulating the
+file and data structure:
 
 ### close()
 
@@ -246,3 +237,6 @@ Limitations:
 Inter-process locking is unstable on OSX.  You can have a single
 process write the file then close it and several other processes open
 it up read-only, but multiple writers won't cut it.
+
+Shared memory mediates access to the objects so you cannot safely
+share a read-write file across a mounted volume (NFS, SMB, etc).

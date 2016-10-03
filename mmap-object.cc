@@ -293,13 +293,13 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
     return;
   }
   v8::String::Utf8Value prop(property);
-  data_length += prop.length();
   while(true) {
     try {
+      data_length *= 2;
       char_allocator allocer(self->map_seg->get_segment_manager());
       if (value->IsString()) {
         v8::String::Utf8Value data(value);
-        c = new Cell(string(*data).c_str(), allocer);
+        c = new Cell(string(*data).c_str(), allocer); // ALLOC
       } else if (value->IsNumber()) {
         c = new Cell(Nan::To<double>(value).FromJust());
       }
@@ -317,11 +317,11 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
       Nan::ThrowError(error_stream.str().c_str());
       return;
     } catch(length_error) {
-      if (!self->grow(data_length * 2)) {
+      if (!self->grow(data_length * 3)) {
         return;
       }
     } catch(bip::bad_alloc &ba) {
-      if (!self->grow(data_length * 2)) {
+      if (!self->grow(data_length * 3)) {
         return;
       }
     }
@@ -649,7 +649,7 @@ bool SharedMap::grow(size_t size) {
     Nan::ThrowError("File need to be larger but can only resize in write-only mode.");
     return false;
   }
-  
+
   file_size += size;
   if (file_size > max_file_size) {
     Nan::ThrowError("File grew too large.");

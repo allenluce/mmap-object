@@ -131,7 +131,7 @@ class SharedMap : public Nan::ObjectWrap {
 public:
   SharedMap() : readonly(false), writeonly(false), closed(false), inWriteLock(false) {}
   virtual ~SharedMap();
-  void reify_mutexes(string file_name, bool wo);
+  void reify_mutexes();
   static NAN_MODULE_INIT(Init) {
     auto tpl = Nan::New<v8::FunctionTemplate>();
     auto inst = tpl->InstanceTemplate();
@@ -282,7 +282,7 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
     lock.swap(lock_);
     LOCKINFO("1 SUCCESS");
   }
-  Cell *c;
+  Cell *c = 0;
   if (value->IsString()) {
     v8::String::Utf8Value data(value);
     data_length += data.length();
@@ -294,32 +294,16 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
   }
   v8::String::Utf8Value prop(property);
   data_length += prop.length();
-
   while(true) {
     try {
+      char_allocator allocer(self->map_seg->get_segment_manager());
       if (value->IsString()) {
         v8::String::Utf8Value data(value);
-        char_allocator allocer(self->map_seg->get_segment_manager());
-        c = new Cell(string(*data).c_str(), allocer); // ALLOC
-        break;
+        c = new Cell(string(*data).c_str(), allocer);
       } else if (value->IsNumber()) {
         c = new Cell(Nan::To<double>(value).FromJust());
       }
-    } catch(length_error) {
-      if (!self->grow(data_length * 2)) {
-        return;
-      }
-    } catch(bip::bad_alloc) {
-      if (!self->grow(data_length * 2)) {
-        return;
-      }
-    }
-  }
-  
-  while(true) {
-    try {
       shared_string *string_key;
-      char_allocator allocer(self->map_seg->get_segment_manager());
       string_key = new shared_string(string(*prop).c_str(), allocer);
       auto pair = self->property_map->insert({ *string_key, *c }); // ALLOC
       if (!pair.second) {
@@ -327,11 +311,16 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
         self->property_map->insert({ *string_key, *c });
       }
       break;
+    } catch (bip::lock_exception &ex) {
+      ostringstream error_stream;
+      error_stream << "Lock exception: " << ex.what();
+      Nan::ThrowError(error_stream.str().c_str());
+      return;
     } catch(length_error) {
       if (!self->grow(data_length * 2)) {
         return;
       }
-    } catch(bip::bad_alloc) {
+    } catch(bip::bad_alloc &ba) {
       if (!self->grow(data_length * 2)) {
         return;
       }
@@ -493,7 +482,7 @@ NAN_METHOD(SharedMapControl::remove_shared_mutex) {
   bip::shared_memory_object::remove(mutex_name.c_str());
 }
 
-void SharedMap::reify_mutexes(string file_name, bool wo) {
+void SharedMap::reify_mutexes() {
   string mutex_name(file_name);
   replace(mutex_name.begin(), mutex_name.end(), '/', '-');
   // Find or create the mutexes.
@@ -595,7 +584,10 @@ NAN_METHOD(SharedMapControl::Open) {
   }
     
   SharedMap *d = new SharedMap();
-  d->reify_mutexes(*filename, wo); // Get these set up before proceeding.
+  d->setFilename(*filename);
+  d->readonly = ro;
+  d->writeonly = wo;
+  d->reify_mutexes(); // Get these set up before proceeding.
   // Does something else have this held in WO?
   if (!d->mutexes->wo_mutex.timed_lock_sharable(boost::get_system_time() + boost::posix_time::seconds(1))) {
     Nan::ThrowError("Cannot open, another process has this open write-only.");
@@ -635,10 +627,7 @@ NAN_METHOD(SharedMapControl::Open) {
     Nan::ThrowError(error_stream.str().c_str());
     return;
   }
-  
-  d->readonly = ro;
-  d->setFilename(*filename);
-
+ 
   c->Wrap(info.This());
   auto map_obj = SharedMap::NewInstance();
     
@@ -668,6 +657,7 @@ bool SharedMap::grow(size_t size) {
   }
   map_seg->flush();
   delete map_seg;
+  bip::managed_mapped_file::shrink_to_fit(file_name.c_str());
   if (!bip::managed_mapped_file::grow(file_name.c_str(), size)) {
     Nan::ThrowError("Error growing file.");
     return false;

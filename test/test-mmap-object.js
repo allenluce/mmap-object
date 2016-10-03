@@ -124,29 +124,103 @@ describe('mmap-object', function () {
       }).to.throw(/Symbol properties are not supported./)
     })
 
-    it('grows small files', function () {
-      const filename = path.join(this.dir, 'grow_me')
-      const m = MMO(filename, 'rw', 1000000, 1)
-      expect(fs.statSync(filename)['size']).to.equal(1024)
-      m.obj['key'] = new Array(BigKeySize).join('big')
-      expect(fs.statSync(filename)['size']).to.above(1024)
-    })
-
-    it.only('bombs when file gets too big', function () {
+    it('bombs when file gets too big', function () {
       const filename = path.join(this.dir, 'bomb_me')
-      const m = MMO(filename, 'rw', 20, 1, 4)
-      console.log("BEFORE")
+      const m = MMO(filename, 'rw', 40000, 20000, 4)
       m.obj['key'] = new Array(BigKeySize).join('big')
-      console.log("AFTER")
       expect(function () {
         m.obj['otherkey'] = new Array(BigKeySize).join('big')
-      }).to.throw(/File grew too large./)
+      }).to.throw(/File need to be larger but can only resize in write-only mode./)
       m.control.close()
     })
 
     it('allows numbers as property names', function () {
       this.shobj[1] = 'what'
       expect(this.shobj[1]).to.equal('what')
+    })
+  })
+
+  describe('Write-onlyer', function () {
+    beforeEach(function () {
+      this.filename = path.join(this.dir, this.currentTest.title)
+      const ret = MMO(this.filename, 'wo')
+      this.shobj = ret.obj
+      this.ctrl = ret.control
+    })
+
+    afterEach(function () {
+      this.ctrl.close()
+    })
+
+    it('sets properties to a string', function () {
+      this.shobj.my_string_property = 'my value'
+      this.shobj['some other property'] = 'some other value'
+      this.shobj['one more property'] = new Array(BigKeySize).join('A bunch of strings')
+      expect(this.shobj.my_string_property).to.equal('my value')
+      expect(this.shobj.my_string_property).to.equal('my value')
+      expect(this.shobj['some other property']).to.equal('some other value')
+      expect(this.shobj['one more property']).to.equal(new Array(BigKeySize).join('A bunch of strings'))
+    })
+
+    it('sets properties to a number', function () {
+      this.shobj.my_number_property = 12
+      expect(this.shobj.my_number_property).to.equal(12)
+      this.shobj['some other number property'] = 0.2
+      expect(this.shobj['some other number property']).to.equal(0.2)
+    })
+
+    it('can delete properties', function () {
+      this.shobj.should_be_deleted = 'please delete me'
+      expect(this.shobj.should_be_deleted).to.equal('please delete me')
+      expect(delete this.shobj.should_be_deleted).to.be.true
+      expect(this.shobj.should_be_deleted).to.be.undefined
+    })
+
+    it('has enumerable and writable properties', function () {
+      this.shobj.akey = 'avalue'
+      expect(this.shobj.propertyIsEnumerable('akey')).to.be.true
+      expect(Object.getOwnPropertyDescriptor(this.shobj, 'akey').writable).to.be.true
+    })
+
+    it('gets a property', function () {
+      this.shobj.another_property = 'whateever value'
+      expect(this.shobj.another_property).to.equal('whateever value')
+    })
+
+    it('has undefined unset properties', function () {
+      expect(this.shobj.noother_property).to.be.undefined
+    })
+
+    it('throws when attempting to delete symbol', function () {
+      const self = this
+      expect(function () {
+        delete self.shobj[Symbol('first')]
+      }).to.throw(/Symbol properties are not supported for delete./)
+    })
+
+    it('bombs on write to symbol property', function () {
+      const self = this
+      expect(function () {
+        self.shobj[Symbol('first')] = 'what'
+      }).to.throw(/Symbol properties are not supported./)
+    })
+
+    it.only('grows small files', function () {
+      const filename = path.join(this.dir, 'grow_me')
+      const m = MMO(filename, 'wo', 1000000, 1)
+      expect(fs.statSync(filename)['size']).to.equal(1024)
+      m.obj['key'] = new Array(BigKeySize).join('big')
+      expect(fs.statSync(filename)['size']).to.above(1024)
+    })
+
+    it('bombs when file gets too big', function () {
+      const filename = path.join(this.dir, 'bomb_me')
+      const m = MMO(filename, 'wo', 40, 20, 4)
+      m.obj['key'] = new Array(BigKeySize).join('big')
+      expect(function () {
+        m.obj['otherkey'] = new Array(BigKeySize).join('big')
+      }).to.throw(/File need to be larger but can only resize in write-only mode./)
+      m.control.close()
     })
   })
 

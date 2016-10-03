@@ -531,8 +531,8 @@ void SharedMap::reify_mutexes() {
 NAN_METHOD(SharedMapControl::Open) {
   v8::Local<v8::Object> thisObject;
   if (!info.IsConstructCall()) {
-    const int argc = 4;
-    v8::Local<v8::Value> argv[argc] = {info[0], info[1], info[2], info[3]};
+    const int argc = 5;
+    v8::Local<v8::Value> argv[argc] = {info[0], info[1], info[2], info[3], info[4]};
     v8::Local<v8::Function> cons = Nan::New(constructor());
     info.GetReturnValue().Set(cons->NewInstance(argc, argv));
     return;
@@ -543,7 +543,6 @@ NAN_METHOD(SharedMapControl::Open) {
 
   bool ro = string(*mode) == "ro";
   bool wo = string(*mode) == "wo";
-  
   bool createFile = false;
   struct stat buf;
   int s = stat(*filename, &buf);
@@ -646,7 +645,7 @@ void SharedMap::setFilename(string fn_string) {
 bool SharedMap::grow(size_t size) {
   // Can ONLY grow in write-only mode!
   if (!writeonly) {
-    Nan::ThrowError("File need to be larger but can only resize in write-only mode.");
+    Nan::ThrowError("File needs to be larger but can only resize in write-only mode.");
     return false;
   }
 

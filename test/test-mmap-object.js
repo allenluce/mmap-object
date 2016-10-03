@@ -14,10 +14,6 @@ const which = require('which')
 const BigKeySize = 1000
 const BiggerKeySize = 10000
 
-const methods = ['isClosed', 'isOpen', 'close', 'valueOf', 'toString',
-                 'close', 'get_free_memory', 'get_size', 'bucket_count',
-                 'max_bucket_count', 'load_factor', 'max_load_factor']
-
 describe('mmap-object', function () {
   before(function () {
     temp.track()
@@ -126,11 +122,11 @@ describe('mmap-object', function () {
 
     it('bombs when file gets too big', function () {
       const filename = path.join(this.dir, 'bomb_me')
-      const m = MMO(filename, 'rw', 40000, 20000, 4)
+      const m = MMO(filename, 'rw', 20000, 10000, 4)
       m.obj['key'] = new Array(BigKeySize).join('big')
       expect(function () {
         m.obj['otherkey'] = new Array(BigKeySize).join('big')
-      }).to.throw(/File need to be larger but can only resize in write-only mode./)
+      }).to.throw(/File needs to be larger but can only resize in write-only mode./)
       m.control.close()
     })
 
@@ -205,7 +201,7 @@ describe('mmap-object', function () {
       }).to.throw(/Symbol properties are not supported./)
     })
 
-    it.only('grows small files', function () {
+    it('grows small files', function () {
       const filename = path.join(this.dir, 'grow_me')
       const m = MMO(filename, 'wo', 200, 1)
       //expect(fs.statSync(filename)['size']).to.equal(1024)
@@ -220,7 +216,7 @@ describe('mmap-object', function () {
       m.obj['key'] = new Array(BigKeySize).join('big')
       expect(function () {
         m.obj['otherkey'] = new Array(BigKeySize).join('big')
-      }).to.throw(/File need to be larger but can only resize in write-only mode./)
+      }).to.throw(/File grew too large./)
       m.control.close()
     })
   })
@@ -294,7 +290,7 @@ describe('mmap-object', function () {
       writer.should_be_deleted = 'I should not exist!'
       delete writer.should_be_deleted
       m.control.close()
-      const n = MMO(this.testfile)
+      const n = MMO(this.testfile, 'ro')
       this.reader = n.obj
     })
 
@@ -327,8 +323,7 @@ describe('mmap-object', function () {
 
     it('bombs on non-existing file', function () {
       expect(function () {
-        const obj = MMO('/tmp/no_file_at_all')
-        expect(obj).to.not.exist
+        MMO('/tmp/no_file_at_all', 'ro')
       }).to.throw(/.tmp.no_file_at_all does not exist.|.tmp.no_file_at_all: No such file or directory/)
     })
 
@@ -341,7 +336,7 @@ describe('mmap-object', function () {
       expect(m.control.isClosed()).to.be.true
       expect(m.control.isOpen()).to.be.false
       expect(function () {
-        expect(m.m.control.first).to.equal('value for first')
+        expect(m.obj.first).to.equal('value for first')
       }).to.throw(/Cannot read from closed object./)
     })
 
@@ -368,20 +363,13 @@ describe('mmap-object', function () {
       }).to.throw(/Cannot delete from read-only object./)
     })
 
-    it.skip('can get keys', function () {
+    it('can get keys', function () {
       expect(this.reader).to.have.keys(['first', 'second', this.bigKey, '12345', '12346', 'samekey'])
     })
 
     it('has enumerable but read-only properties', function () {
       expect(this.reader.propertyIsEnumerable('first')).to.be.true
       expect(Object.getOwnPropertyDescriptor(this.reader, 'first').writable).to.be.false
-    })
-
-    it('has un-enumerable and read-only methods', function () {
-      for (let method of methods) {
-        expect(this.reader.propertyIsEnumerable(method), `${method} is enumerable`).to.be.false
-        expect(delete this.reader[method], `${method} is writable`).to.be.false
-      }
     })
 
     it('bombs on bad file', function () {

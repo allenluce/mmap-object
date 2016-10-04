@@ -469,45 +469,68 @@ describe('mmap-object', function () {
     afterEach(function () {
       this.shobj.control.close()
     })
-    it('works across processes', function (done) {
-      process.env.TESTFILE = this.testfile
-      const child = child_process.fork('./test/util-rw-process.js', [this.filename])
-      child.on('exit', function (exit_code) {
-        expect(child.signalCode).to.be.null
-        expect(exit_code, 'error from util-rw-process.js').to.equal(0)
-        done()
-      })
+    it('works across multiple processes', function (done) {
+      let children = []
+      const CHILDCOUNT = 10
+      for (let i = 0; i < CHILDCOUNT; i++) {
+        children[i] = child_process.fork('./test/util-rw-process.js', [this.filename])
+        children[i].on('exit', function (exit_code) {
+          expect(children[i].signalCode).to.be.null
+          expect(exit_code, 'error from util-rw-process.js').to.equal(0)
+          done()
+        })
+      }
       let shobj = this.shobj
       shobj.obj['one'] = 'first'
-      let state = 0
-      child.on('message', function (msg) {
-        switch (msg) {
-          case 'started':
-            expect(state).to.equal(0)
-            child.send('read')
-            state++
-            break
-          case 'first': // Make sure it's reading anything.
-            expect(state).to.equal(1)
-            state++
-            shobj.control.writeLock(function (cb) {
-              shobj.obj['one'] = 'second'
-              child.send('read') // Will it read 'second'??
-              setTimeout(function () {
-                shobj.obj['one'] = 'third'
-                cb()
-              }, 200)
-            })
-            break
-          case 'third': // Nope, it read the right thing!
-            expect(state).to.equal(2)
-            done()
-            state++
-            break
-          default: // It read the wrong thing.  Probably 'second'.
-            expect.fail(`Didn't expect ${msg}`)
-            break
+      let state = [0, 0, 0, 0]
+      const handler = function (child) {
+        return function (msg) {
+          switch (msg) {
+            case 'started':
+              expect(state[0]).to.be.below(CHILDCOUNT)
+              child.send('read')
+              state[0]++
+              break
+            case 'first': // Make sure it's reading anything.
+              expect(state[1]).to.be.below(CHILDCOUNT)
+              state[1]++
+              if (state[1] === CHILDCOUNT) {
+                shobj.control.writeLock(function (cb) {
+                  shobj.obj['one'] = 'second'
+                  children.forEach(function (child) {
+                    child.send('read')
+                  })
+                  setTimeout(function () {
+                    shobj.obj['one'] = 'third'
+                    cb()
+                  }, 200)
+                })
+              }
+              break
+            case 'third': // It read the right thing!
+              expect(state[2]).to.be.below(CHILDCOUNT)
+              state[2]++
+              if (state[2] === CHILDCOUNT) { // Send them on a writing spree.
+                children.forEach(function (child) {
+                  child.send('write')
+                })
+              }
+              break
+            case 'fourth': // It wrote then read and was happy.
+              expect(state[3]).to.be.below(CHILDCOUNT)
+              state[3]++
+              if (state[3] === CHILDCOUNT) { // Send them on a writing spree.
+                done()
+              }
+              break
+            default: // It read the wrong thing.  Probably 'second'.
+              expect.fail(`Didn't expect ${msg}`)
+              break
+          }
         }
+      }
+      children.forEach(function (child) {
+        child.on('message', handler(child))
       })
     })
   })

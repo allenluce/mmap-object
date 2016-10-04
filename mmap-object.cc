@@ -376,10 +376,14 @@ NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
     Nan::ThrowError("Cannot read from closed object.");
     return;
   }
-  LOCKINFO("SHARE 1");
-  bip::sharable_lock<upgradable_mutex_type> lock(self->mutexes->rw_mutex);
-  LOCKINFO("SHARE 1 SUCCESS");
-
+  bip::sharable_lock<upgradable_mutex_type> lock;
+  if (!self->inWriteLock) {
+    LOCKINFO("SHARE 1");
+    bip::sharable_lock<upgradable_mutex_type> lock_(self->mutexes->rw_mutex);
+    lock.swap(lock_);
+    LOCKINFO("SHARE 1 SUCCESS");
+  }
+  
   // If the map doesn't have it, let v8 continue the search.
   auto pair = self->property_map->find<char_string, hasher, s_equal_to>
     (*src, hasher(), s_equal_to());
@@ -430,9 +434,14 @@ NAN_PROPERTY_DELETER(SharedMap::PropDeleter) {
     Nan::ThrowError("Cannot delete from closed object.");
     return;
   }
-  LOCKINFO("2");
-  bip::scoped_lock<upgradable_mutex_type> lock(self->mutexes->rw_mutex);
-  LOCKINFO("2 SUCCESS");
+  bip::scoped_lock<upgradable_mutex_type> lock;
+  if (!self->inWriteLock) {
+    LOCKINFO("2");
+    bip::scoped_lock<upgradable_mutex_type> lock_(self->mutexes->rw_mutex);
+    lock.swap(lock_);
+    LOCKINFO("2 SUCCESS");
+  }
+    
   v8::String::Utf8Value prop(property);
   shared_string *string_key;
   char_allocator allocer(self->map_seg->get_segment_manager());
@@ -771,14 +780,5 @@ void SharedMapControl::Init(Nan::ADDON_REGISTER_FUNCTION_ARGS_TYPE exports, ADDO
 
 NODE_MODULE(mmap_object, SharedMapControl::Init)
 
-
 // Todo: look for self->map-> refs and see if they can be
 // encapsulated in the SharedMap directly.
-
-// Deal with read-only mode.
-
-
-// When growing, NOBODY CAN BE MAPPING THE FILE!
-// Have something that'll keep track of the file generation.
-// Grow will increment it.
-// When the generation incremnts, close and reopen the file.

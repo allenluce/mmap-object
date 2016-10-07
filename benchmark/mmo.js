@@ -8,15 +8,15 @@ const assert = require('assert')
 const dbPath = process.argv[2]
 const childNo = process.argv[3]
 const childCount = process.argv[4]
+const loopCount = process.argv[5]
 
-const COUNT = 100
 const obj = MMO(dbPath, 'rw', 20000000, 20000000)
 
 process.on('message', function (msg) {
   switch (msg) {
     case 'write':
       // Do a bunch of writes based on our childNo here.
-      for (let i = 0; i < COUNT; i++) {
+      for (let i = 0; i < loopCount; i++) {
         obj.obj[`child${childNo}_${i}`] = 'boogabooga'
       }
       process.send('wrote') // Report that we're done.
@@ -24,7 +24,7 @@ process.on('message', function (msg) {
     case 'read':
       // Read the stuff that ANOTHER process wrote
       const otherChild = (childNo + 1) % childCount
-      for (let i = 0; i < COUNT; i++) {
+      for (let i = 0; i < loopCount; i++) {
         const data = obj.obj[`child${otherChild}_${i}`]
         assert(data === 'boogabooga')
       }
@@ -35,7 +35,7 @@ process.on('message', function (msg) {
         // Read in readonly
         const obj = MMO(dbPath, 'ro')
         const otherChild = (childNo + 1) % childCount
-        for (let i = 0; i < COUNT; i++) {
+        for (let i = 0; i < loopCount; i++) {
           const data = obj.obj[`child${otherChild}_${i}`]
           assert(data === 'boogabooga')
         }

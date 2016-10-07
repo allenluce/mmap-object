@@ -5,108 +5,176 @@ const temp = require('temp')
 const path = require('path')
 const child_process = require('child_process')
 const EventEmitter = require('events')
-
-var lmdb = require('node-lmdb')
+const async = require('async')
+const assert = require('assert')
+const lmdb = require('node-lmdb')
 
 temp.track()
-
 const tempdir = temp.mkdirSync('node-shared')
-const CHILDCOUNT = 100
-const dbPaths = {}
 
-dbPaths.lmdb = tempdir
+const CHILDCOUNT = 20
+const LOOPCOUNT = 100
 
-// lmdb prep
-var env = new lmdb.Env()
-env.open({
-  path: dbPaths.lmdb,
-  maxDbs: 3
-})
+class Base {
+  constructor () {
+    this.state = [0, 0, 0]
+    this.signaler = new EventEmitter()
+  }
 
-var dbi = env.openDbi({
-  name: 'mydb1',
-  create: true
-})
-dbi.close()
-env.close()
+  setup (cb) {
+    this.children = []
+    this.signaler.once('ready', cb)
+    for (var i = 0; i < CHILDCOUNT; i++) {
+      var child = child_process.fork(`./benchmark/${this.script}.js`, [this.dbPath, i, CHILDCOUNT, LOOPCOUNT])
+      child.on('message', (msg) => this.handler(msg))
+      this.children.push(child)
+    }
+  }
 
-// MMO prep
-dbPaths.mmo = path.join(tempdir, 'mmofile')
+  complete () {
+    this.sendall('exit')
+  }
 
-// Have 10 children open and write their things.
-const children = {}
-const types = ['mmo', 'lmdb']
-const state = {}
+  sendall (msg) {
+    this.children.forEach(function (child) {
+      child.send(msg)
+    })
+  }
 
-function sendall (which, msg) {
-  children[which].forEach(function (child) {
-    child.send(msg)
-  })
-}
+  runchildren (mode) {
+    return deferred => {
+      this.state = [0, 0, 0]
+      this.signaler.once('done', function () {
+        deferred.resolve()
+      })
+      this.sendall(mode)
+    }
+  }
 
-const signaler = new EventEmitter()
-
-// Child state handler
-const handler = function (which) {
-  return function (msg) {
+  handler (msg) {
     switch (msg) {
+      case 'started':
+        this.state[0]++
+        if (this.state[0] === CHILDCOUNT) {
+          this.signaler.emit('ready')
+        }
+        break
       case 'wrote':
-        state[which][0]++
-        if (state[which][0] === CHILDCOUNT) {
-          sendall(which, 'read')
+        this.state[1]++
+        if (this.state[1] === CHILDCOUNT) {
+          this.sendall('read')
         }
         break
       case 'didread':
-        if (state[which][0] !== CHILDCOUNT) {
+        if (this.state[1] !== CHILDCOUNT) {
           console.error('Got a message out of order!')
         }
-        state[which][1]++
-        if (state[which][1] === CHILDCOUNT) {
-          signaler.emit('done')
+        this.state[2]++
+        if (this.state[2] === CHILDCOUNT) {
+          this.signaler.emit('done')
         }
         break
       case 'didreadonly':
-        state[which][0]++
-        if (state[which][0] === CHILDCOUNT) {
-          signaler.emit('done')
+        this.state[1]++
+        if (this.state[1] === CHILDCOUNT) {
+          this.signaler.emit('done')
         }
         break
     }
   }
 }
 
-types.forEach(function (which) {
-  children[which] = []
-  for (let i = 0; i < CHILDCOUNT; i++) {
-    children[which][i] = child_process.fork(`./benchmark/${which}.js`, [dbPaths[which], i, CHILDCOUNT])
-    children[which][i].on('message', handler(which))
-  }
-})
+const benchmarks = {
+  lmdb: class extends Base {
+    constructor () {
+      super()
+      this.dbPath = tempdir
+      this.script = 'lmdb'
+      const env = new lmdb.Env()
+      env.open({
+        path: this.dbPath,
+        maxDbs: 3
+      })
+      const dbi = env.openDbi({
+        name: 'mydb1',
+        create: true
+      })
+      dbi.close()
+      env.close()
+    }
 
-function runchildren (which, mode) {
-  return function (deferred) {
-    signaler.once('done', function () {
-      deferred.resolve()
-    })
-    state[which] = [0, 0]
-    sendall(which, mode)
+    fn () {
+      return this.runchildren('write')
+    }
+  },
+
+  mmoReadWrite: class extends Base {
+    constructor () {
+      super()
+      this.dbPath = path.join(tempdir, 'mmofile')
+      this.script = 'mmo'
+    }
+
+    fn () {
+      return this.runchildren('write')
+    }
+  },
+
+  mmoReadOnly: class extends Base {
+    constructor () {
+      super()
+      this.dbPath = path.join(tempdir, 'mmofile')
+      this.script = 'mmo'
+    }
+
+    fn () {
+      return this.runchildren('readonly')
+    }
+  },
+
+  redis: class extends Base {
+    constructor () {
+      super()
+      this.script = 'redis'
+    }
+
+    fn () {
+      return this.runchildren('write')
+    }
   }
 }
 
-suite.add('mmap-object read-write', {
-  defer: true,
-  fn: runchildren('mmo', 'write')
-}).add('mmap-object read-only', {
-  defer: true,
-  fn: runchildren('mmo', 'readonly')
-}).add('lmdb read-write', {
-  defer: true,
-  fn: runchildren('lmdb', 'write')
-}).on('cycle', function (event) {
-  console.log(String(event.target))
-}).on('complete', function () {
-  console.log('Fastest is ' + this.filter('fastest').map('name'))
-  types.forEach(function (which) {
-    sendall(which, 'exit')
+// Handy for testing
+
+let only = false
+
+for (var b in benchmarks) {
+  if (benchmarks[b].only) {
+    only = true
+  }
+}
+
+async.forEachOf(benchmarks, function (Case_class, case_name, cb) {
+  if (Case_class.skip) {
+    return cb()
+  }
+  if (only && !Case_class.only) {
+    return cb()
+  }
+  const bench_case = new Case_class()
+  bench_case.setup(function () {
+    suite.add(case_name, {
+      defer: true,
+      onComplete: function () { bench_case.complete() },
+      fn: bench_case.fn()
+    })
+    cb()
   })
-}).run()
+}, function (err) {
+  assert(err === null)
+  suite.on('cycle', function (event) {
+    console.log(String(event.target))
+  }).on('complete', function () {
+    console.log('Fastest is ' + this.filter('fastest').map('name'))
+  }).run()
+})

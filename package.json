@@ -43,6 +43,7 @@
     "shmop"
   ],
   "devDependencies": {
+    "aerospike": "^2.4.0",
     "async": "^2.0.1",
     "benchmark": "^2.1.1",
     "chai": "^3.5.0",

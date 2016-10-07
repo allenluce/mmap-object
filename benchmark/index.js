@@ -12,7 +12,7 @@ const lmdb = require('node-lmdb')
 temp.track()
 const tempdir = temp.mkdirSync('node-shared')
 
-const CHILDCOUNT = 20
+const CHILDCOUNT = 10
 const LOOPCOUNT = 100
 
 class Base {
@@ -141,9 +141,21 @@ const benchmarks = {
     fn () {
       return this.runchildren('write')
     }
+  },
+
+  aerospike: class extends Base {
+    constructor () {
+      super()
+      this.script = 'aerospike'
+    }
+
+    fn () {
+      return this.runchildren('write')
+    }
   }
 }
 
+//benchmarks.aerospike.only = true
 // Handy for testing
 
 let only = false
@@ -165,7 +177,10 @@ async.forEachOf(benchmarks, function (Case_class, case_name, cb) {
   bench_case.setup(function () {
     suite.add(case_name, {
       defer: true,
-      onComplete: function () { bench_case.complete() },
+      onComplete: function (e) {
+        bench_case.complete()
+        e.target.hz *= CHILDCOUNT * LOOPCOUNT
+      },
       fn: bench_case.fn()
     })
     cb()

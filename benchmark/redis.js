@@ -1,6 +1,5 @@
 'use strict'
 const redis = require('redis')
-const async = require('async')
 const client = redis.createClient()
 const assert = require('assert')
 

@@ -35,8 +35,9 @@ process.on('message', function (msg) {
         // Read in readonly
         const obj = MMO(dbPath, 'ro')
         const otherChild = (childNo + 1) % childCount
-        for (let i = 0; i < loopCount; i++) {
-          const data = obj.obj[`child${otherChild}_${i}`]
+        // Do twice as many to keep op count in parity with rw case
+        for (let i = 0; i < loopCount * 2; i++) {
+          const data = obj.obj[`child${otherChild}_${i % loopCount}`]
           assert(data === 'boogabooga')
         }
         process.send('didreadonly') // report that we're done

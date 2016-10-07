@@ -23,7 +23,7 @@ describe('mmap-object', function () {
 
   describe('Writer', function () {
     beforeEach(function () {
-      this.filename = path.join(this.dir, this.currentTest.title)
+      this.filename = path.join(this.dir, this.currentTest.title + '_Writer')
       const ret = MmapObject(this.filename)
       this.shobj = ret.obj
       this.ctrl = ret.control
@@ -130,13 +130,13 @@ describe('mmap-object', function () {
       }).to.throw(/Symbol properties are not supported./)
     })
 
-    it('bombs when file gets too big', function () {
+    it('bombs when file cannot hold enough stuff', function () {
       const filename = path.join(this.dir, 'bomb_me')
-      const m = MmapObject(filename, 'rw', 20, 10, 4)
+      const m = MmapObject(filename, 'rw', 10, 20, 4)
       m.obj['key'] = new Array(BigKeySize).join('big')
       expect(function () {
         m.obj['otherkey'] = new Array(BigKeySize).join('big')
-      }).to.throw(/File needs to be larger but can only resize in write-only mode./)
+      }).to.throw(/File needs to be larger but can only be resized in write-only mode./)
       m.control.close()
     })
 
@@ -146,7 +146,7 @@ describe('mmap-object', function () {
     })
 
     it('avoids getting too big when rewriting the same key over and over', function () {
-      const filename = path.join(this.dir, 'bomb_me')
+      const filename = path.join(this.dir, 'bomb_me_2')
       const smallobj = MmapObject(filename, 'rw', 2, 2, 2)
       for (let i = 0; i < 200002; i++) {
         smallobj.obj['key'] = `a chunk of data: ${i}`
@@ -157,7 +157,7 @@ describe('mmap-object', function () {
 
   describe('Write-onlyer', function () {
     beforeEach(function () {
-      this.filename = path.join(this.dir, this.currentTest.title)
+      this.filename = path.join(this.dir, this.currentTest.title + '_Write_onlyer')
       const ret = MmapObject(this.filename, 'wo')
       this.shobj = ret.obj
       this.ctrl = ret.control
@@ -222,15 +222,15 @@ describe('mmap-object', function () {
 
     it('grows small files', function () {
       const filename = path.join(this.dir, 'grow_me')
-      const m = MmapObject(filename, 'wo', 200, 1)
+      const m = MmapObject(filename, 'wo', 1, 200)
       expect(fs.statSync(filename)['size']).to.equal(1024)
       m.obj['key'] = new Array(BigKeySize).join('big')
       expect(fs.statSync(filename)['size']).to.above(1024)
     })
 
-    it('bombs when file gets too big', function () {
-      const filename = path.join(this.dir, 'bomb_me')
-      const m = MmapObject(filename, 'wo', 16, 12, 4)
+    it('bombs when file gets bigger than the max size', function () {
+      const filename = path.join(this.dir, 'bomb_me_3')
+      const m = MmapObject(filename, 'wo', 12, 16, 4)
       m.obj['key'] = new Array(BigKeySize).join('big')
       expect(function () {
         m.obj['otherkey'] = new Array(BigKeySize).join('big')
@@ -261,7 +261,7 @@ describe('mmap-object', function () {
     describe('file with some values', function () {
       // These are dependent && done in sequence.
       before(function () {
-        this.m = MmapObject(path.join(this.dir, 'bucket_counter'), 'rw', 1000, 5, 4)
+        this.m = MmapObject(path.join(this.dir, 'bucket_counter'), 'rw', 5, 1000, 4)
       })
 
       it('has bucket_count', function () {
@@ -300,7 +300,7 @@ describe('mmap-object', function () {
   describe('Opener', function () {
     before(function () {
       this.testfile = path.join(this.dir, 'openertest')
-      const m = MmapObject(this.testfile)
+      const m = MmapObject(this.testfile, 'wo')
       const writer = m.obj
       writer['first'] = 'value for first'
       writer['second'] = 0.207879576
@@ -347,7 +347,8 @@ describe('mmap-object', function () {
 
     it('throws exception on non-existing file', function () {
       expect(function () {
-        MmapObject('/tmp/no_file_at_all', 'ro')
+        const obj = MmapObject('/tmp/no_file_at_all', 'ro')
+        expect(obj).to.be.null
       }).to.throw(/.tmp.no_file_at_all does not exist.|.tmp.no_file_at_all: No such file or directory/)
     })
 
@@ -355,7 +356,7 @@ describe('mmap-object', function () {
       const newfile = path.join(this.dir, 'zerolength')
       fs.appendFileSync(newfile, '')
       expect(function () {
-        MmapObject(newfile, 'ro').obj
+        new MmapObject(newfile)
       }).to.throw(/zerolength is an empty file./)
     })
 
@@ -363,10 +364,9 @@ describe('mmap-object', function () {
       const newfile = path.join(this.dir, 'corrupt')
       fs.appendFileSync(newfile, 'CORRUPTION')
       expect(function () {
-        MmapObject(newfile, 'ro').obj
-      }).to.throw(/Can't open file .*corrupt: boost::interprocess_exception::library_error/)
+        MmapObject(newfile).obj
+      }).to.throw(/Can't open file .*\/corrupt: boost::interprocess_exception::library_error/)
     })
-
     it('read after close gives exception', function () {
       const m = MmapObject(this.testfile)
       expect(m.obj.first).to.equal('value for first')
@@ -384,7 +384,7 @@ describe('mmap-object', function () {
       const reader = this.reader
       expect(function () {
         reader.my_string_property = 'my value'
-      }).to.throw(/Read-only object./)
+      }).to.throw(/Cannot write to read-only object./)
     })
 
     it('can get string properties', function () {
@@ -554,7 +554,7 @@ describe('mmap-object', function () {
   })
   describe('read-write objects', function () {
     beforeEach(function () {
-      this.filename = path.join(this.dir, this.currentTest.title)
+      this.filename = path.join(this.dir, this.currentTest.title + '_Read_writer')
       this.shobj = MmapObject(this.filename)
     })
 
@@ -637,6 +637,43 @@ describe('mmap-object', function () {
       children.forEach(function (child) {
         child.on('message', handler(child))
       })
+    })
+  })
+  describe('write-only objects', function () {
+    beforeEach(function () {
+      this.filename = path.join(this.dir, this.currentTest.title + '_Write_only_obj')
+    })
+
+    it('cannot open wo if already open rw', function () {
+      const fn = this.filename
+      expect(function () {
+        MmapObject(fn, 'rw')
+        MmapObject(fn, 'wo')
+      }).to.throw(/Cannot lock for write-only, another process has this file open./)
+    })
+    it('cannot open wo if already open ro', function () {
+      const fn = this.filename
+      expect(function () {
+        const obj = MmapObject(fn, 'rw')
+        obj['a'] = 'b'
+        obj.control.close()
+        MmapObject(fn, 'ro')
+        MmapObject(fn, 'wo')
+      }).to.throw(/Cannot lock for write-only, another process has this file open./)
+    })
+    it('cannot open rw if already open wo', function () {
+      const fn = this.filename
+      expect(function () {
+        MmapObject(fn, 'wo')
+        MmapObject(fn, 'rw')
+      }).to.throw(/Cannot open, another process has this open write-only./)
+    })
+    it('cannot open ro if already open wo', function () {
+      const fn = this.filename
+      expect(function () {
+        MmapObject(fn, 'wo')
+        MmapObject(fn, 'ro')
+      }).to.throw(/Cannot open, another process has this open write-only./)
     })
   })
 })

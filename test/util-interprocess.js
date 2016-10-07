@@ -19,7 +19,7 @@ const BiggerKeySize = 10000
 
 describe('Interprocess', function () {
   before(function () {
-    const m = new MMO(process.env.TESTFILE, 'ro')
+    const m = new MMO(process.env.TESTFILE)
     this.reader = m.obj
   })
   it('reads a string', function () {

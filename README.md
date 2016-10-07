@@ -85,7 +85,7 @@ console.log(`My value is ${read_only_shared_object.new_key}`)
 
 ## API
 
-### MMO(path, [mode], [max_file_size], [initial_file_size], [initial_bucket_count])
+### MMO(path, [mode], [initial_file_size], [max_file_size], [initial_bucket_count])
 
 Opens an existing file or creates a new file mapped into shared
 memory. Returns an object that provides access to the shared
@@ -94,13 +94,15 @@ memory. Throws an exception on error.
 __Arguments__
 
 * `path` - The path of the file to create
-* `mode` - 'rw' for read-write mode (the default), 'ro' for read-only mode.
-* `max_file_size` - *Optional* The largest the file is allowed to
-  grow in kilobytes. If data is added beyond this limit, an exception is thrown.
-  Defaults to 5 gigabytes.
+* `mode` - 'rw' for read-write mode (the default), 'ro' for read-only
+  mode, 'wo' for write-only mode.
 * `initial_file_size` - *Optional* On create, the initial size of the
   file in kilobytes. If more space is needed, the file will automatically
-  be grown to a larger size. Minimum is 1k bytes. Defaults to 5000k.
+  be grown to a larger size. Minimum is 1k. Defaults to 1k.
+* `max_file_size` - *Optional* in 'wo' mode, the largest the file is
+  allowed to grow, in kilobytes. If data is added beyond this limit,
+  an exception is thrown.  Defaults to 5 gigabytes. Ignored in 'rw'
+  and 'ro' modes.
 * `initial_bucket_count` - *Optional* On create, the number of buckets
   to allocate initially. This is passed to the underlying
   [Boost unordered_map](http://www.boost.org/doc/libs/1_38_0/doc/html/boost/unordered_map.html).
@@ -166,7 +168,6 @@ for (let key in obj) {
 }
 ```
 
-
 ### isOpen()
 
 Return true if this object is currently open.
@@ -198,6 +199,21 @@ The average number of elements per bucket.
 ### max_load_factor()
 
 The current maximum load factor.
+
+## Read-only mode
+
+This is a convenience/safety mode. Any writes to the object will produce an error.
+
+## Write-only mode
+
+This is a convenience mode for creating files that are intended to be
+primarily read-only. Write-only mode is like read-write mode but with
+three differences:
+
+1. If the file is created too small initially, it is grown as
+necessary (up to `max_file_size`).
+2. When the file is closed, unused space is compacted to make the file smaller.
+3. Only a single process can have the file open.
 
 ## Unit tests
 

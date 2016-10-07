@@ -16,12 +16,14 @@
 #include <boost/interprocess/sync/scoped_lock.hpp>
 #include <boost/interprocess/sync/sharable_lock.hpp>
 #include <boost/interprocess/containers/string.hpp>
+#include <boost/scope_exit.hpp>
 #include <boost/thread/thread_time.hpp>
 #include <boost/unordered_map.hpp>
 #include <boost/version.hpp>
 #include <nan.h>
 
 #define LOCKINFO(lock) // cout << ::getpid() << " LOCK " << lock << endl
+#define UNLOCKINFO(lock) // cout << ::getpid() << " UNLOCK " << lock << endl
 
 #if BOOST_VERSION < 105500
 #pragma message("Found boost version " BOOST_PP_STRINGIZE(BOOST_LIB_VERSION))
@@ -128,6 +130,7 @@ struct Mutexes {
 
 class SharedMap : public Nan::ObjectWrap {
   friend class SharedMapControl;
+  friend struct CloseWorker;
 public:
   SharedMap() : readonly(false), writeonly(false), closed(false), inWriteLock(false) {}
   virtual ~SharedMap();
@@ -260,7 +263,7 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
     return;
   }
   if (self->readonly) {
-    Nan::ThrowError("Read-only object.");
+    Nan::ThrowError("Cannot write to read-only object.");
     return;
   }
   if (self->closed) {
@@ -277,12 +280,17 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
   bip::scoped_lock<upgradable_mutex_type> lock;
   
   if (!self->inWriteLock) {
-    LOCKINFO("1");
+    LOCKINFO("WRITE 1");
     bip::scoped_lock<upgradable_mutex_type> lock_(self->mutexes->rw_mutex);
     lock.swap(lock_);
-    LOCKINFO("1 SUCCESS");
   }
-  Cell *c = 0;
+
+  BOOST_SCOPE_EXIT(self) {
+    if (!self->inWriteLock) {
+      UNLOCKINFO("WRITE 1");
+    }
+  } BOOST_SCOPE_EXIT_END;
+  
   if (value->IsString()) {
     v8::String::Utf8Value data(value);
     data_length += data.length();
@@ -293,9 +301,9 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
     return;
   }
   v8::String::Utf8Value prop(property);
+  Cell *c = 0;
   while(true) {
     try {
-      data_length *= 2;
       char_allocator allocer(self->map_seg->get_segment_manager());
       if (value->IsString()) {
         v8::String::Utf8Value data(value);
@@ -310,6 +318,7 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
         self->property_map->erase(*string_key);
         self->property_map->insert({ *string_key, *c });
       }
+      delete c;
       break;
     } catch (bip::lock_exception &ex) {
       ostringstream error_stream;
@@ -317,11 +326,12 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
       Nan::ThrowError(error_stream.str().c_str());
       return;
     } catch(length_error) {
-      if (!self->grow(data_length * 3)) {
+      if (!self->grow(data_length)) {
         return;
       }
-    } catch(bip::bad_alloc &ba) {
-      if (!self->grow(data_length * 3)) {
+    } catch(bip::bad_alloc) {
+      delete c;
+      if (!self->grow(data_length + 8000)) {
         return;
       }
     }
@@ -382,9 +392,14 @@ NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
     LOCKINFO("SHARE 1");
     bip::sharable_lock<upgradable_mutex_type> lock_(self->mutexes->rw_mutex);
     lock.swap(lock_);
-    LOCKINFO("SHARE 1 SUCCESS");
   }
   
+  BOOST_SCOPE_EXIT(self) {
+    if (!self->inWriteLock) {
+      UNLOCKINFO("SHARE 1");
+    }
+  } BOOST_SCOPE_EXIT_END;
+
   // If the map doesn't have it, let v8 continue the search.
   auto pair = self->property_map->find<char_string, hasher, s_equal_to>
     (*src, hasher(), s_equal_to());
@@ -437,11 +452,16 @@ NAN_PROPERTY_DELETER(SharedMap::PropDeleter) {
   }
   bip::scoped_lock<upgradable_mutex_type> lock;
   if (!self->inWriteLock) {
-    LOCKINFO("2");
+    LOCKINFO("WRITE 2");
     bip::scoped_lock<upgradable_mutex_type> lock_(self->mutexes->rw_mutex);
     lock.swap(lock_);
-    LOCKINFO("2 SUCCESS");
   }
+
+  BOOST_SCOPE_EXIT(self) {
+    if (!self->inWriteLock) {
+      UNLOCKINFO("WRITE 2");
+    }
+  } BOOST_SCOPE_EXIT_END;
     
   v8::String::Utf8Value prop(property);
   shared_string *string_key;
@@ -519,13 +539,16 @@ void SharedMap::reify_mutexes() {
   
   // Trial lock of rw mutex
   try {
-    LOCKINFO("3");
+    LOCKINFO("WRITE 3");
+    BOOST_SCOPE_EXIT(mutex_name) {
+      UNLOCKINFO("WRITE 3");
+    } BOOST_SCOPE_EXIT_END;
+    
     bip::scoped_lock<upgradable_mutex_type> lock(mutexes->rw_mutex, boost::get_system_time() + boost::posix_time::seconds(1));
     if (lock == 0) { // Didn't grab. May be messed up.
       new (mutex_region.get_address()) Mutexes;
-      LOCKINFO("MESSED UP");
+      LOCKINFO("WRITE 3 MESSED UP");
     }      
-    LOCKINFO("3 SUCCESS");
   } catch (bip::lock_exception &ex) {
     if (ex.get_error_code() == 15) { // Need to init the lock area
       new (mutex_region.get_address()) Mutexes;
@@ -550,31 +573,8 @@ NAN_METHOD(SharedMapControl::Open) {
   
   Nan::Utf8String filename(info[0]->ToString());
   Nan::Utf8String mode(info[1]->ToString());
-
-  bool ro = string(*mode) == "ro";
-  bool wo = string(*mode) == "wo";
-  bool createFile = false;
-  struct stat buf;
-  int s = stat(*filename, &buf);
-  if (s == 0) {
-    if (!S_ISREG(buf.st_mode)) {
-      ostringstream error_stream;
-      error_stream << *filename << " is not a regular file.";
-      Nan::ThrowError(error_stream.str().c_str());
-      return;
-    }
-  } else { // File doesn't exist
-    if (ro) {
-      ostringstream error_stream;
-      error_stream << *filename << " does not exist, cannot open read-only.";
-      Nan::ThrowError(error_stream.str().c_str());
-      return;
-    }      
-    createFile = true;
-  }
-
-  size_t max_file_size = (int)info[2]->Int32Value();
-  size_t initial_file_size = (int)info[3]->Int32Value();
+  size_t initial_file_size = ((int)info[2]->Int32Value()) * 1024;
+  size_t max_file_size = ((int)info[3]->Int32Value()) * 1024;
   size_t initial_bucket_count = (int)info[4]->Int32Value();
   if (initial_file_size == 0) {
     initial_file_size = DEFAULT_FILE_SIZE;
@@ -591,36 +591,58 @@ NAN_METHOD(SharedMapControl::Open) {
   if (initial_bucket_count == 0) {
     initial_bucket_count = 1024;
   }
-    
   SharedMap *d = new SharedMap();
   d->setFilename(*filename);
-  d->readonly = ro;
-  d->writeonly = wo;
+  d->readonly = string(*mode) == "ro";
+  d->writeonly = string(*mode) == "wo";
   d->reify_mutexes(); // Get these set up before proceeding.
+  
+  bool createFile = false;
+  struct stat buf;
+
+  // So we don't try to double-create the file.
+  bip::scoped_lock<upgradable_mutex_type> lock(d->mutexes->rw_mutex);
+  int s = stat(*filename, &buf);
+  if (s == 0) {
+    if (!S_ISREG(buf.st_mode)) {
+      ostringstream error_stream;
+      error_stream << *filename << " is not a regular file.";
+      Nan::ThrowError(error_stream.str().c_str());
+      return;
+    }
+  } else { // File doesn't exist
+    if (d->readonly) {
+      ostringstream error_stream;
+      error_stream << *filename << " does not exist, cannot open read-only.";
+      Nan::ThrowError(error_stream.str().c_str());
+      return;
+    }      
+    createFile = true;
+  }
   // Does something else have this held in WO?
   if (!d->mutexes->wo_mutex.timed_lock_sharable(boost::get_system_time() + boost::posix_time::seconds(1))) {
     Nan::ThrowError("Cannot open, another process has this open write-only.");
     return;
   }
-  if (wo) { // Hold onto the WO lock exclusively.
+  if (d->writeonly) { // Hold onto the WO lock exclusively.
     if (!d->mutexes->wo_mutex.timed_unlock_upgradable_and_lock(boost::get_system_time() + boost::posix_time::seconds(1))) {
       Nan::ThrowError("Cannot lock for write-only, another process has this file open.");
       return;
     }
-    d->writeonly = true;
   }
   
   SharedMapControl *c = new SharedMapControl(d);
 
   try {
     if (createFile) {
-      d->map_seg = new bip::managed_mapped_file(bip::create_only,string(*filename).c_str(), initial_file_size);
+      d->map_seg = new bip::managed_mapped_file(bip::create_only, string(*filename).c_str(), initial_file_size);
       d->property_map = d->map_seg->find_or_construct<PropertyHash>("properties")
         (initial_bucket_count, hasher(), s_equal_to(), d->map_seg->get_segment_manager());
       d->file_size = initial_file_size;
       d->max_file_size = max_file_size;
+      d->map_seg->flush();
     } else {
-      if (ro) {
+      if (d->readonly) {
         d->map_seg = new bip::managed_mapped_file(bip::open_read_only, string(*filename).c_str());
       } else {
         d->map_seg = new bip::managed_mapped_file(bip::open_only, string(*filename).c_str());
@@ -655,18 +677,21 @@ void SharedMap::setFilename(string fn_string) {
 bool SharedMap::grow(size_t size) {
   // Can ONLY grow in write-only mode!
   if (!writeonly) {
-    Nan::ThrowError("File needs to be larger but can only resize in write-only mode.");
+    Nan::ThrowError("File needs to be larger but can only be resized in write-only mode.");
     return false;
   }
-
+  if (size < 100)
+    size = 100;
   file_size += size;
   if (file_size > max_file_size) {
     Nan::ThrowError("File grew too large.");
     return false;
   }
+  // put these guys into a utility function
+  //map_seg->get_segment_manager()->shrink_to_fit_indexes();
   map_seg->flush();
   delete map_seg;
-  bip::managed_mapped_file::shrink_to_fit(file_name.c_str());
+  //bip::managed_mapped_file::shrink_to_fit(file_name.c_str());
   if (!bip::managed_mapped_file::grow(file_name.c_str(), size)) {
     Nan::ThrowError("Error growing file.");
     return false;
@@ -688,17 +713,18 @@ SharedMap::~SharedMap() {
 }
   
 struct CloseWorker : public Nan::AsyncWorker {
-  bip::managed_mapped_file *map_seg;
-  string file_name;
-  upgradable_mutex_type *mutex;
-  CloseWorker(Nan::Callback *callback, bip::managed_mapped_file *map_seg,
-              string file_name, upgradable_mutex_type *mutex)
-    : AsyncWorker(callback), map_seg(map_seg), file_name(file_name), mutex(mutex) {}
+  SharedMap *map;
+  CloseWorker(Nan::Callback *callback, SharedMap *map) : AsyncWorker(callback), map(map) {}
   virtual void Execute() { // May run in a separate thread
-    bip::scoped_lock<upgradable_mutex_type> lock(*mutex);
-    bip::managed_mapped_file::shrink_to_fit(file_name.c_str());
-    map_seg->flush();
-    delete map_seg;
+     if (map->writeonly) {
+      bip::managed_mapped_file::shrink_to_fit(map->file_name.c_str());
+    }
+    map->map_seg->flush();
+    delete map->map_seg;
+    map->map_seg = NULL;
+    if (map->writeonly) {
+      map->mutexes->wo_mutex.unlock();
+    }
   }
 };
 
@@ -707,24 +733,23 @@ NAN_METHOD(SharedMapControl::Close) {
   if (!self)
     return;
   auto callback = new Nan::Callback(info[0].As<v8::Function>());
-  auto closer = new CloseWorker(callback, self->map_seg, self->file_name, self->mutex);
+  auto closer = new CloseWorker(callback, self->map);
 
   if (info[0]->IsFunction()) { // Close asynchronously
-    if (self->closed) {
+    if (self->map->closed) {
       v8::Local<v8::Value> argv[1] = {Nan::Error("Attempted to close a closed object.")};
       callback->Call(1, argv);
       return;
     }
     AsyncQueueWorker(closer);
   } else {
-    if (self->closed) {
+    if (self->map->closed) {
       Nan::ThrowError("Attempted to close a closed object.");
       return;
     }
     closer->Execute();
   }  
-  self->map_seg = NULL;
-  self->closed = true;
+  self->map->closed = true;
 }
 
 NAN_METHOD(SharedMapControl::isClosed) {
@@ -747,7 +772,7 @@ NAN_METHOD(SharedMapControl::writeUnlock) {
     return;
   self->map->inWriteLock = false;
   self->map->mutexes->rw_mutex.unlock();
-  LOCKINFO("5 SUCCESS");
+  UNLOCKINFO("WRITE 5");
 }
 
 NAN_METHOD(SharedMapControl::writeLock) {
@@ -765,7 +790,7 @@ NAN_METHOD(SharedMapControl::writeLock) {
 
   self->map->mutexes->rw_mutex.lock();
   self->map->inWriteLock = true;
-  LOCKINFO("5");
+  LOCKINFO("WRITE 5");
   callback->Call(1, argv);
 }
 

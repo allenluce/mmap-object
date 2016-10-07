@@ -120,13 +120,13 @@ describe('mmap-object', function () {
       }).to.throw(/Symbol properties are not supported./)
     })
 
-    it('bombs when file gets too big', function () {
+    it('bombs when file cannot hold enough stuff', function () {
       const filename = path.join(this.dir, 'bomb_me')
-      const m = MMO(filename, 'rw', 20000, 10000, 4)
+      const m = MMO(filename, 'rw', 10, 20, 4)
       m.obj['key'] = new Array(BigKeySize).join('big')
       expect(function () {
         m.obj['otherkey'] = new Array(BigKeySize).join('big')
-      }).to.throw(/File needs to be larger but can only resize in write-only mode./)
+      }).to.throw(/File needs to be larger but can only be resized in write-only mode./)
       m.control.close()
     })
 
@@ -203,16 +203,16 @@ describe('mmap-object', function () {
 
     it('grows small files', function () {
       const filename = path.join(this.dir, 'grow_me')
-      const m = MMO(filename, 'wo', 200, 1)
-      //expect(fs.statSync(filename)['size']).to.equal(1024)
-      //m.obj['key'] = 'value'
-      m.obj['key'] = new Array(BigKeySize).join('big')
-      //expect(fs.statSync(filename)['size']).to.above(1024)
+      const m = MMO(filename, 'wo', 1000, 100000)
+      expect(fs.statSync(filename)['size']).to.equal(1024)
+      m.obj['key'] = 'value'
+      m.obj['key2'] = new Array(BigKeySize).join('big')
+      expect(fs.statSync(filename)['size']).to.above(1024)
     })
 
-    it('bombs when file gets too big', function () {
+    it('bombs when file gets bigger than the max size', function () {
       const filename = path.join(this.dir, 'bomb_me')
-      const m = MMO(filename, 'wo', 40, 20, 4)
+      const m = MMO(filename + "_wo", 'wo', 10000, 20000, 4)
       m.obj['key'] = new Array(BigKeySize).join('big')
       expect(function () {
         m.obj['otherkey'] = new Array(BigKeySize).join('big')
@@ -243,7 +243,7 @@ describe('mmap-object', function () {
     describe('file with some values', function () {
       // These are dependent && done in sequence.
       before(function () {
-        this.m = MMO(path.join(this.dir, 'bucket_counter'), 'rw', 1000, 5, 4)
+        this.m = MMO(path.join(this.dir, 'bucket_counter'), 'rw', 5, 1000, 4)
       })
 
       it('bucket_count', function () {
@@ -277,7 +277,7 @@ describe('mmap-object', function () {
   describe('Opener', function () {
     before(function () {
       this.testfile = path.join(this.dir, 'openertest')
-      const m = MMO(this.testfile)
+      const m = MMO(this.testfile, 'wo')
       const writer = m.obj
       writer['first'] = 'value for first'
       writer['second'] = 0.207879576
@@ -296,11 +296,6 @@ describe('mmap-object', function () {
 
     it('works when Object.assigned', function () {
       const obj = Object.assign({}, this.reader)
-      expect(obj.first).to.equal('value for first')
-    })
-
-    it.skip('works when inherited', function () {
-      const obj = Object.create(this.reader)
       expect(obj.first).to.equal('value for first')
     })
 
@@ -323,10 +318,10 @@ describe('mmap-object', function () {
 
     it('bombs on non-existing file', function () {
       expect(function () {
-        MMO('/tmp/no_file_at_all', 'ro')
+        const obj = MMO('/tmp/no_file_at_all', 'ro')
+        expect(obj).to.be.null
       }).to.throw(/.tmp.no_file_at_all does not exist.|.tmp.no_file_at_all: No such file or directory/)
     })
-
     it('read after close gives exception', function () {
       const m = MMO(this.testfile)
       expect(m.obj.first).to.equal('value for first')
@@ -344,7 +339,7 @@ describe('mmap-object', function () {
       const reader = this.reader
       expect(function () {
         reader.my_string_property = 'my value'
-      }).to.throw(/Read-only object./)
+      }).to.throw(/Cannot write to read-only object./)
     })
 
     it('can get string properties', function () {
@@ -548,6 +543,43 @@ describe('mmap-object', function () {
       children.forEach(function (child) {
         child.on('message', handler(child))
       })
+    })
+  })
+  describe('write-only objects', function () {
+    beforeEach(function () {
+      this.filename = path.join(this.dir, this.currentTest.title)
+    })
+
+    it('cannot open wo if already open rw', function () {
+      const fn = this.filename
+      expect(function () {
+        MMO(fn, 'rw')
+        MMO(fn, 'wo')
+      }).to.throw(/Cannot lock for write-only, another process has this file open./)
+    })
+    it('cannot open wo if already open ro', function () {
+      const fn = this.filename
+      expect(function () {
+        const obj = MMO(fn, 'rw')
+        obj['a'] = 'b'
+        obj.control.close()
+        MMO(fn, 'ro')
+        MMO(fn, 'wo')
+      }).to.throw(/Cannot lock for write-only, another process has this file open./)
+    })
+    it('cannot open rw if already open wo', function () {
+      const fn = this.filename
+      expect(function () {
+        MMO(fn, 'wo')
+        MMO(fn, 'rw')
+      }).to.throw(/Cannot open, another process has this open write-only./)
+    })
+    it('cannot open ro if already open wo', function () {
+      const fn = this.filename
+      expect(function () {
+        MMO(fn, 'wo')
+        MMO(fn, 'ro')
+      }).to.throw(/Cannot open, another process has this open write-only./)
     })
   })
 })

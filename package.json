@@ -11,13 +11,13 @@
     "module_path": "./lib",
     "host": "https://github.com/allenluce/mmap-object/releases/download/{version}"
   },
-  "version": "1.1.0",
+  "version": "1.1.1",
   "author": "Allen Luce",
   "repository": {
     "type": "git",
     "url": "https://github.com/allenluce/mmap-object.git"
   },
-  "license": "UNLICENSED",
+  "license": "ISC",
   "gypfile": true,
   "dependencies": {
     "nan": "^2.3.5",

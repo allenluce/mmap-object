@@ -6,9 +6,9 @@
 #include <boost/version.hpp>
 #include <nan.h>
 
-#if BOOST_VERSION != 105500
+#if BOOST_VERSION < 105500
 #pragma message("Found boost version " BOOST_PP_STRINGIZE(BOOST_LIB_VERSION))
-#error mmap-object needs version 1_55 to maintain compatibility.
+#error mmap-object needs at least version 1_55 to maintain compatibility.
 #endif
 
 #define MINIMUM_FILE_SIZE 500 // Minimum necessary to handle an mmap'd unordered_map on all platforms.

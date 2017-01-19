@@ -130,14 +130,14 @@ describe('mmap-object', function () {
     it('grows small files', function () {
       const filename = path.join(this.dir, 'grow_me')
       const smallobj = new MmapObject.Create(filename, 500)
-      expect(fs.statSync(filename)['size']).to.equal(500)
+      expect(fs.statSync(filename)['size']).to.equal(512000)
       smallobj['key'] = new Array(BigKeySize).join('big')
       expect(fs.statSync(filename)['size']).to.above(500)
     })
 
     it('bombs when file gets too big', function () {
       const filename = path.join(this.dir, 'bomb_me')
-      const smallobj = new MmapObject.Create(filename, 500, 4, 20000)
+      const smallobj = new MmapObject.Create(filename, 1, 4, 20)
       smallobj['key'] = new Array(BigKeySize).join('big')
       expect(function () {
         smallobj['otherkey'] = new Array(BigKeySize).join('big')
@@ -168,7 +168,7 @@ describe('mmap-object', function () {
     })
 
     it('bucket_count', function () {
-      this.obj = new MmapObject.Create(path.join(this.dir, 'bucket_counter'), 5000, 4)
+      this.obj = new MmapObject.Create(path.join(this.dir, 'bucket_counter'), 5, 4)
       expect(this.obj.bucket_count()).to.equal(4)
       this.obj.one = 'value'
       this.obj.two = 'value'

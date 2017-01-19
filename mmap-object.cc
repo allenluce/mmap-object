@@ -358,8 +358,10 @@ NAN_METHOD(SharedMap::Create) {
 
   Nan::Utf8String filename(info[0]->ToString());
   size_t file_size = (int)info[1]->Int32Value();
+  file_size *= 1024;
   size_t initial_bucket_count = (int)info[2]->Int32Value();
   size_t max_file_size = (int)info[3]->Int32Value();
+  max_file_size *= 1024;
   SharedMap *d = new SharedMap();
 
   if (file_size == 0) {

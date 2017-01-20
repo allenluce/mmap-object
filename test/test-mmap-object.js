@@ -239,7 +239,7 @@ describe('mmap-object', function () {
       expect(function () {
         const obj = new MmapObject.Open('/tmp/no_file_at_all')
         expect(obj).to.not.exist
-      }).to.throw(/.tmp.no_file_at_all does not exist./)
+      }).to.throw(/.tmp.no_file_at_all does not exist.|.tmp.no_file_at_all: No such file or directory/)
     })
 
     it('read after close gives exception', function () {

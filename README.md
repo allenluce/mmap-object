@@ -75,22 +75,23 @@ provides access to the shared memory. Throws an exception on error.
 __Arguments__
 
 * `path` - The path of the file to create
-* `file_size` - *Optional* The initial size of the file in bytes. If
-  more space is needed, the file will automatically be grown to a
-  larger size. Minimum is 500 bytes. Defaults to 5 megabytes.
+* `file_size` - *Optional* The initial size of the file in
+  kilobytes. If more space is needed, the file will automatically be
+  grown to a larger size. Minimum is 500 bytes. Defaults to 5
+  megabytes.
 * `initial_bucket_count` - *Optional* The number of buckets to
   allocate initially. This is passed to the underlying
   [Boost unordered_map](http://www.boost.org/doc/libs/1_38_0/doc/html/boost/unordered_map.html).
   Defaults to 1024. Set this to the number of keys you expect to write.
-* `max_file_size` - *Optional* The largest the file is allowed to
-  grow. If data is added beyond this limit, an exception is thrown.
-  Defaults to 5 gigabytes.
+* `max_file_size` - *Optional* The largest the file is allowed to grow
+  in kilobites. If data is added beyond this limit, an exception is
+  thrown.  Defaults to 5 gigabytes.
 
 __Example__
 
 ```js
 // Create a 500K map for 300 objects.
-const obj = new Shared.Create("/tmp/sharedmem", 500000, 300)
+const obj = new Shared.Create("/tmp/sharedmem", 500, 300)
 ```
 
 ### new Open(path)

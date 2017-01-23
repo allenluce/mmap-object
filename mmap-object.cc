@@ -132,11 +132,18 @@ private:
   static NAN_METHOD(max_bucket_count);
   static NAN_METHOD(load_factor);
   static NAN_METHOD(max_load_factor);
+  static NAN_METHOD(inspect);
   static NAN_PROPERTY_SETTER(PropSetter);
   static NAN_PROPERTY_GETTER(PropGetter);
   static NAN_PROPERTY_QUERY(PropQuery);
   static NAN_PROPERTY_ENUMERATOR(PropEnumerator);
   static NAN_PROPERTY_DELETER(PropDeleter);
+  static NAN_INDEX_GETTER(IndexGetter);
+  static NAN_INDEX_SETTER(IndexSetter);
+  static NAN_INDEX_QUERY(IndexQuery);
+  static NAN_INDEX_DELETER(IndexDeleter);
+  static NAN_INDEX_ENUMERATOR(IndexEnumerator);
+
   static v8::Local<v8::Function> init_methods(v8::Local<v8::FunctionTemplate> f_tpl);
   static inline Nan::Persistent<v8::Function> & constructor() {
     static Nan::Persistent<v8::Function> my_constructor;
@@ -250,16 +257,59 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
   }
 }
 
+#define STRINGINDEX                                             \
+  std::ostringstream ss;                                        \
+  ss << index;                                                  \
+  auto prop = Nan::New<v8::String>(ss.str()).ToLocalChecked()
+
+NAN_INDEX_GETTER(SharedMap::IndexGetter) {
+  STRINGINDEX;
+  SharedMap::PropGetter(prop, info);
+}
+
+NAN_INDEX_SETTER(SharedMap::IndexSetter) {
+  STRINGINDEX;
+  SharedMap::PropSetter(prop, value, info);
+}
+
+NAN_INDEX_QUERY(SharedMap::IndexQuery) {
+  STRINGINDEX;
+  SharedMap::PropQuery(prop, info);
+}
+
+NAN_INDEX_DELETER(SharedMap::IndexDeleter) {
+  STRINGINDEX;
+  SharedMap::PropDeleter(prop, info);
+}
+
+NAN_INDEX_ENUMERATOR(SharedMap::IndexEnumerator) {
+  info.GetReturnValue().Set(Nan::New<v8::Array>(v8::None));
+}
+
+NAN_METHOD(SharedMap::inspect) {
+  info.GetReturnValue().Set(v8::None);
+}
+
 NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
   v8::String::Utf8Value data(info.Data());
   v8::String::Utf8Value src(property);
-  if (string(*data) == "prototype")
+  if (property->IsSymbol() || string(*data) == "prototype") {
     return;
-  if (isMethod(string(*src)))
+  }
+
+  if (string(*src) == "inspect") {
+    v8::Local<v8::FunctionTemplate> tmpl = Nan::New<v8::FunctionTemplate>(inspect);
+    v8::Local<v8::Function> fn = Nan::GetFunction(tmpl).ToLocalChecked();
+    fn->SetName(Nan::New("inspect").ToLocalChecked());
+    info.GetReturnValue().Set(fn);
     return;
+  }
+
+  if (!property->IsNull() && isMethod(string(*src))) {
+    return;
+  }
 
   auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
-
   if (self->closed) {
     Nan::ThrowError("Cannot read from closed object.");
     return;
@@ -280,7 +330,6 @@ NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
 }
 
 NAN_PROPERTY_QUERY(SharedMap::PropQuery) {
-  v8::String::Utf8Value data(info.Data());
   v8::String::Utf8Value src(property);
 
   if (isMethod(string(*src))) {
@@ -298,8 +347,6 @@ NAN_PROPERTY_QUERY(SharedMap::PropQuery) {
 }
 
 NAN_PROPERTY_DELETER(SharedMap::PropDeleter) {
-  v8::String::Utf8Value data(info.Data());
-
   if (property->IsSymbol()) {
     Nan::ThrowError("Symbol properties are not supported for delete.");
     return;
@@ -315,7 +362,7 @@ NAN_PROPERTY_DELETER(SharedMap::PropDeleter) {
   auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
 
   if (self->readonly) {
-    info.GetReturnValue().Set(Nan::New<v8::Boolean>(v8::None));
+    Nan::ThrowError("Cannot delete from read-only object.");
     return;
   }
 
@@ -529,7 +576,8 @@ v8::Local<v8::Function> SharedMap::init_methods(v8::Local<v8::FunctionTemplate> 
   inst->SetInternalFieldCount(1);
   Nan::SetNamedPropertyHandler(inst, PropGetter, PropSetter, PropQuery, PropDeleter, PropEnumerator,
                                Nan::New<v8::String>("instance").ToLocalChecked());
-
+  Nan::SetIndexedPropertyHandler(inst, IndexGetter, IndexSetter, IndexQuery, IndexDeleter, IndexEnumerator,
+                                 Nan::New<v8::String>("instance").ToLocalChecked());
   auto fun = Nan::GetFunction(f_tpl).ToLocalChecked();
   constructor().Reset(fun);
   return fun;

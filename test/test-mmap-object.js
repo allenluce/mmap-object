@@ -205,11 +205,14 @@ describe('mmap-object', function () {
       writer[this.bigKey] = new Array(BiggerKeySize).join('six hundred seventy nine thousand nine hundred thirty two bytes long')
       writer['samekey'] = 'first value'
       writer['samekey'] = writer['samekey'] + ' and a new value too'
+      writer[12345] = 'numberkey'
+      writer['12346'] = 'numberkey2'
       writer.should_be_deleted = 'I should not exist!'
       delete writer.should_be_deleted
       writer.close()
       this.reader = new MmapObject.Open(this.testfile)
     })
+
     it('must be called as a constructor', function () {
       const testfile = this.testfile
       expect(function () {
@@ -262,12 +265,24 @@ describe('mmap-object', function () {
       }).to.throw(/Read-only object./)
     })
 
-    it('can get stored strings', function () {
+    it('can get string properties', function () {
       expect(this.reader.first).to.equal('value for first')
     })
 
+    it('can set/get numeric properties', function () {
+      expect(this.reader['12345']).to.equal('numberkey')
+      expect(this.reader[12346]).to.equal('numberkey2')
+    })
+
+    it('throws when deleting numeric properties', function () {
+      const self = this
+      expect(function () {
+        delete self.reader[12345]
+      }).to.throw(/Cannot delete from read-only object./)
+    })
+
     it('can get keys', function () {
-      expect(this.reader).to.have.keys(['first', 'second', this.bigKey, 'samekey'])
+      expect(this.reader).to.have.keys(['first', 'second', this.bigKey, '12345', '12346', 'samekey'])
     })
 
     it('has enumerable but read-only properties', function () {
@@ -289,6 +304,13 @@ describe('mmap-object', function () {
       }).to.throw(/.dev.null is not a regular file./)
     })
 
+    it('throws when attempting to delete property', function () {
+      const self = this
+      expect(function () {
+        delete self.reader.first
+      }).to.throw(/Cannot delete from read-only object./)
+    })
+
     it('throws when closing a closed object', function () {
       const obj = new MmapObject.Open(this.testfile)
       obj.close()
@@ -296,6 +318,7 @@ describe('mmap-object', function () {
         obj.close()
       }).to.throw(/Attempted to close a closed object./)
     })
+
     it('can differentiate between library methods and data', function () {
       expect(this.reader.isData(this.reader.first)).to.be.true
       expect(this.reader.isData('first')).to.be.true

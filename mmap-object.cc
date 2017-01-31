@@ -109,8 +109,8 @@ struct Mutexes {
 };  
 
 class SharedMap : public Nan::ObjectWrap {
-  SharedMap(string file_name, size_t file_size, size_t max_file_size) :
-    file_name(file_name), file_size(file_size), max_file_size(max_file_size),
+  SharedMap(string file_name, size_t max_file_size) :
+    file_name(file_name), max_file_size(max_file_size),
     readonly(false), closed(true), inWriteLock(false) {}
   SharedMap(string file_name) :
     file_name(file_name), readonly(false), closed(true), inWriteLock(false) {}
@@ -141,11 +141,11 @@ public:
   
 private:
   string file_name;
-  size_t file_size;
   size_t max_file_size;
   bip::managed_mapped_file *map_seg;
   uint32_t version;
   PropertyHash *property_map;
+  size_t initial_bucket_count;
   bool readonly;
   bool writeonly;
   bool closed;
@@ -628,14 +628,15 @@ NAN_METHOD(SharedMapControl::Open) {
   d->readonly = string(*mode) == "ro";
   d->writeonly = string(*mode) == "wo";
   d->reify_mutexes(); // Get these set up before proceeding.
+  d->max_file_size = max_file_size;
+  d->initial_bucket_count = initial_bucket_count;
   
-  bool createFile = false;
   struct stat buf;
 
   // So we don't try to double-create the file.
   bip::scoped_lock<upgradable_mutex_type> lock(d->mutexes->rw_mutex);
-  int s = stat(*filename, &buf);
-  if (s == 0) {
+  int stat_return = stat(*filename, &buf);
+  if (stat_return == 0) {
     if (!S_ISREG(buf.st_mode)) {
       ostringstream error_stream;
       error_stream << *filename << " is not a regular file.";
@@ -655,7 +656,6 @@ NAN_METHOD(SharedMapControl::Open) {
       Nan::ThrowError(error_stream.str().c_str());
       return;
     }      
-    createFile = true;
   }
 
   // Does something else have this held in WO?
@@ -673,45 +673,30 @@ NAN_METHOD(SharedMapControl::Open) {
   SharedMapControl *c = new SharedMapControl(d);
 
   try {
-    if (createFile) {
-      d->map_seg = new bip::managed_mapped_file(bip::create_only, string(*filename).c_str(), initial_file_size);
-      d->version = FILEVERSION;
-      d->map_seg->construct<uint32_t>("version")(FILEVERSION);
-      d->property_map = d->map_seg->construct<PropertyHash>("properties")
-        (initial_bucket_count, hasher(), s_equal_to(), d->map_seg->get_segment_manager());
-      d->file_size = initial_file_size;
-      d->max_file_size = max_file_size;
-      d->map_seg->flush();
-    } else {
-      if (d->readonly) {
-        d->map_seg = new bip::managed_mapped_file(bip::open_read_only, string(*filename).c_str());
-      } else {
-        d->map_seg = new bip::managed_mapped_file(bip::open_only, string(*filename).c_str());
-      }
-      if (d->map_seg->get_size() != (unsigned long)buf.st_size) {
-        ostringstream error_stream;
-        error_stream << "File " << *filename << " appears to be corrupt (1).";
-        Nan::ThrowError(error_stream.str().c_str());
-        return;
-      }
-      auto find_map = d->map_seg->find<PropertyHash>("properties");
-      d->property_map = find_map.first;
-      if (d->property_map == NULL) {
-        ostringstream error_stream;
-        error_stream << "File " << *filename << " appears to be corrupt (2).";
-        Nan::ThrowError(error_stream.str().c_str());
-        return;
-      }
-      auto find_version = d->map_seg->find<uint32_t>("version");
-      if (find_version.second == 0) {
-        d->version = 0; // No version but should be compatible with V1.
-      } else {
-        d->version = *find_version.first;
-      }
-      CHECK_VERSION(d);
-      d->file_size = d->map_seg->get_size();
-      d->max_file_size = max_file_size;
+    d->map_seg = new bip::managed_mapped_file(bip::open_or_create, string(*filename).c_str(), initial_file_size);
+    if (stat_return == 0 && d->map_seg->get_size() != (unsigned long)buf.st_size) {
+      ostringstream error_stream;
+      error_stream << "File " << *filename << " appears to be corrupt (1).";
+      Nan::ThrowError(error_stream.str().c_str());
+      return;
     }
+    d->property_map = d->map_seg->find_or_construct<PropertyHash>("properties")
+      (initial_bucket_count, hasher(), s_equal_to(), d->map_seg->get_segment_manager());
+    if (d->property_map == NULL) {
+      ostringstream error_stream;
+      error_stream << "File " << *filename << " appears to be corrupt (2).";
+      Nan::ThrowError(error_stream.str().c_str());
+      return;
+    }
+    d->version = FILEVERSION;
+    auto vers = d->map_seg->find_or_construct<uint32_t>("version")(FILEVERSION);
+    if (vers == NULL) {
+      d->version = 0; // No version but should be compatible with V1.
+    } else {
+      d->version = *vers;
+    }
+    CHECK_VERSION(d);
+    d->map_seg->flush();
   } catch(bip::interprocess_exception &ex){
     ostringstream error_stream;
     error_stream << "Can't open file " << *filename << ": " << ex.what();
@@ -742,6 +727,7 @@ bool SharedMap::grow(size_t size) {
   }
   if (size < 100)
     size = 100;
+  auto file_size = map_seg->get_size();
   file_size += size;
   if (file_size > max_file_size) {
     throw FileTooLarge();

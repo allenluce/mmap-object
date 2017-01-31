@@ -122,7 +122,7 @@ describe('mmap-object', function () {
 
     it('bombs when file cannot hold enough stuff', function () {
       const filename = path.join(this.dir, 'bomb_me')
-      const m = MMO(filename, 'rw', 10000, 20000, 4)
+      const m = MMO(filename, 'rw', 10, 20, 4)
       m.obj['key'] = new Array(BigKeySize).join('big')
       expect(function () {
         m.obj['otherkey'] = new Array(BigKeySize).join('big')
@@ -318,7 +318,8 @@ describe('mmap-object', function () {
 
     it('bombs on non-existing file', function () {
       expect(function () {
-        MMO('/tmp/no_file_at_all', 'ro')
+        const obj = MMO('/tmp/no_file_at_all', 'ro')
+        expect(obj).to.be.null
       }).to.throw(/.tmp.no_file_at_all does not exist.|.tmp.no_file_at_all: No such file or directory/)
     })
     it('read after close gives exception', function () {

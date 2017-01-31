@@ -571,8 +571,8 @@ NAN_METHOD(SharedMapControl::Open) {
   
   Nan::Utf8String filename(info[0]->ToString());
   Nan::Utf8String mode(info[1]->ToString());
-  size_t initial_file_size = (int)info[2]->Int32Value();
-  size_t max_file_size = (int)info[3]->Int32Value();
+  size_t initial_file_size = ((int)info[2]->Int32Value()) * 1024;
+  size_t max_file_size = ((int)info[3]->Int32Value()) * 1024;
   size_t initial_bucket_count = (int)info[4]->Int32Value();
   if (initial_file_size == 0) {
     initial_file_size = DEFAULT_FILE_SIZE;

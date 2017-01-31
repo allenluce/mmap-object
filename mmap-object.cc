@@ -597,7 +597,10 @@ NAN_METHOD(SharedMapControl::Open) {
     const int argc = 5;
     v8::Local<v8::Value> argv[argc] = {info[0], info[1], info[2], info[3], info[4]};
     v8::Local<v8::Function> cons = Nan::New(constructor());
-    info.GetReturnValue().Set(cons->NewInstance(argc, argv));
+    auto new_instance = Nan::NewInstance(cons, argc, argv);
+    if (!new_instance.IsEmpty()) {
+      info.GetReturnValue().Set(new_instance.ToLocalChecked());
+    }
     return;
   }
   

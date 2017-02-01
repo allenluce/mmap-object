@@ -84,6 +84,17 @@ const read_only_shared = MMO.RO('filename').obj
 console.log(`My value is ${read_only_shared_object.new_key}`)
 ```
 
+## Benchmarks
+
+It's fast. This benchmark was run with Redis and Aerospike
+(single-instance) on the same host.  More ops/sec is better:
+
+    lmdb x 39,032 ops/sec ±2.61% (60 runs sampled)
+    aerospike x 70,237 ops/sec ±13.02% (60 runs sampled)
+    redis x 149,409 ops/sec ±6.61% (53 runs sampled)
+    mmoReadWrite x 180,602 ops/sec ±1.12% (72 runs sampled)
+    mmoReadOnly x 332,132 ops/sec ±4.12% (72 runs sampled)
+
 ## API
 
 ### MMO(path, [mode], [initial_file_size], [max_file_size], [initial_bucket_count])

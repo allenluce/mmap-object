@@ -4,7 +4,8 @@
   "main": "lib/mmap-object",
   "scripts": {
     "test": "mocha test/test-*",
-    "install": "node-pre-gyp install --fallback-to-build"
+    "install": "node-pre-gyp install --fallback-to-build",
+    "benchmark": "node benchmark/index.js"
   },
   "binary": {
     "module_name": "mmap-object",

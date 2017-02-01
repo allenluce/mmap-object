@@ -32,7 +32,7 @@
 #error mmap-object needs at least version 1_55 to maintain compatibility.
 #endif
 
-#define MINIMUM_FILE_SIZE 20480  // Minimum necessary to handle an mmap'd unordered_map on all platforms.
+#define MINIMUM_FILE_SIZE 10240  // Minimum necessary to handle an mmap'd unordered_map on all platforms.
 #define DEFAULT_FILE_SIZE 5ul<<20 // 5 megs
 #define DEFAULT_MAX_SIZE 5000ul<<20 // 5000 megs
 

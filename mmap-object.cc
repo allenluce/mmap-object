@@ -22,7 +22,7 @@
 #include <boost/version.hpp>
 #include <nan.h>
 
-#define SHARDS 128
+#define SHARDS 64
 
 #define LOCKINFO(lock) // cout << ::getpid() << " LOCK " << lock << endl
 #define UNLOCKINFO(lock) // cout << ::getpid() << " UNLOCK " << lock << endl
@@ -683,8 +683,6 @@ NAN_METHOD(SharedMapControl::Open) {
     ostringstream error_stream;
     error_stream << "Can't open file " << *filename << ": " << ex.what();
     Nan::ThrowError(error_stream.str().c_str());
-    return;
-  } catch(bip::bad_alloc) {
     return;
   }
   c->Wrap(info.This());

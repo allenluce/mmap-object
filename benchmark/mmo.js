@@ -10,7 +10,7 @@ const childNo = process.argv[3]
 const childCount = process.argv[4]
 const loopCount = process.argv[5]
 
-const obj = MMO(dbPath, 'rw', 20000000, 20000000)
+const obj = MMO(dbPath, 'rw', 20000, 20000)
 
 process.on('message', function (msg) {
   switch (msg) {

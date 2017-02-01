@@ -4,14 +4,15 @@
   "main": "lib/mmap-object",
   "scripts": {
     "test": "mocha test/test-*",
-    "install": "node-pre-gyp install --fallback-to-build"
+    "install": "node-pre-gyp install --fallback-to-build",
+    "benchmark": "node benchmark/index.js"
   },
   "binary": {
     "module_name": "mmap-object",
     "module_path": "./lib",
     "host": "https://github.com/allenluce/mmap-object/releases/download/{version}"
   },
-  "version": "1.4.0",
+  "version": "2.2.0",
   "author": "Allen Luce",
   "repository": {
     "type": "git",
@@ -21,7 +22,6 @@
   "gypfile": true,
   "dependencies": {
     "async": "^2.6.0",
-    "better-sqlite3": "^1.2.1",
     "nan": "^2.10.0",
     "node-pre-gyp": "^0.10.0"
   },
@@ -47,6 +47,7 @@
     "aerospike": "^2.4.0",
     "async": "^2.0.1",
     "benchmark": "^2.1.1",
+    "better-sqlite3": "^1.2.1",
     "chai": "^4.1.2",
     "mocha": "^5.1.1",
     "node-lmdb": "^0.4.1",

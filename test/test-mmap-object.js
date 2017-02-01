@@ -3,7 +3,7 @@
 const binary = require('node-pre-gyp')
 const path = require('path')
 const mmapObjPath = binary.find(path.resolve(path.join(__dirname, '../package.json')))
-const MmapObject = require(mmapObjPath)
+const MMO = require(mmapObjPath)
 const expect = require('chai').expect
 const temp = require('temp')
 const childProcess = require('child_process')
@@ -15,6 +15,10 @@ const async = require('async')
 const BigKeySize = 1000
 const BiggerKeySize = 10000
 
+const SLOT2 = 0x410000000000
+const SLOT3 = 0x420000000000
+const SLOT4 = 0x430000000000
+
 describe('mmap-object', function () {
   before(function () {
     temp.track()
@@ -24,7 +28,7 @@ describe('mmap-object', function () {
   describe('Writer', function () {
     beforeEach(function () {
       this.filename = path.join(this.dir, this.currentTest.title + '_Writer')
-      const ret = MmapObject(this.filename)
+      const ret = MMO(this.filename, 'rw', 10000, 5000000, 1024, SLOT2)
       this.shobj = ret.obj
       this.ctrl = ret.control
     })
@@ -35,7 +39,7 @@ describe('mmap-object', function () {
 
     it('can be called as a constructor', function () {
       const dir = this.dir
-      const ret = new MmapObject(path.join(dir, 'non-constructor'))
+      const ret = new MMO(path.join(dir, 'non-constructor'))
       expect(ret.obj).to.exist
       expect(ret.control.isClosed()).to.be.false
       ret.control.close()
@@ -91,7 +95,7 @@ describe('mmap-object', function () {
     })
 
     it('throws when writing after close', function () {
-      const m = MmapObject(path.join(this.dir, 'closetest-write'))
+      const m = MMO(path.join(this.dir, 'closetest-write'))
       m.obj['first'] = 'value'
       expect(m.control.isClosed()).to.be.false
       expect(m.control.isOpen()).to.be.true
@@ -104,7 +108,7 @@ describe('mmap-object', function () {
     })
 
     it('throws when deleting after close', function () {
-      const m = new MmapObject(path.join(this.dir, 'closetest-del'))
+      const m = new MMO(path.join(this.dir, 'closetest-del'))
       m.obj['first'] = 'value'
       expect(m.control.isClosed()).to.be.false
       expect(m.control.isOpen()).to.be.true
@@ -130,14 +134,24 @@ describe('mmap-object', function () {
       }).to.throw(/Symbol properties are not supported./)
     })
 
-    it('bombs when file cannot hold enough stuff', function () {
+    it('bombs when rw file cannot hold enough stuff', function () {
       const filename = path.join(this.dir, 'bomb_me')
-      const m = MmapObject(filename, 'rw', 10, 20, 4)
+      const m = MMO(filename, 'rw', 15, 2000, 1)
       m.obj['key'] = new Array(BigKeySize).join('big')
       expect(function () {
         m.obj['otherkey'] = new Array(BigKeySize).join('big')
       }).to.throw(/File needs to be larger but can only be resized in write-only mode./)
       m.control.close()
+    })
+
+    it('bombs when base mapping address is bad', function () {
+      if (os.platform() !== 'darwin') { // Only for macOS
+        this.skip()
+      }
+      const filename = path.join(this.dir, 'throw_me')
+      expect(function () {
+        MMO(filename, 'rw', 15, 2000, 1, 1)
+      }).to.throw(/mmap failure: boost::interprocess_exception::library_error /)
     })
 
     it('allows numbers as property names', function () {
@@ -147,7 +161,7 @@ describe('mmap-object', function () {
 
     it('avoids getting too big when rewriting the same key over and over', function () {
       const filename = path.join(this.dir, 'bomb_me_2')
-      const smallobj = MmapObject(filename, 'rw', 2, 2, 2)
+      const smallobj = MMO(filename, 'rw', 2, 2, 2)
       for (let i = 0; i < 200002; i++) {
         smallobj.obj['key'] = `a chunk of data: ${i}`
       }
@@ -158,7 +172,7 @@ describe('mmap-object', function () {
   describe('Write-onlyer', function () {
     beforeEach(function () {
       this.filename = path.join(this.dir, this.currentTest.title + '_Write_onlyer')
-      const ret = MmapObject(this.filename, 'wo')
+      const ret = MMO(this.filename, 'wo', 10000, 5000000, 1024, SLOT2)
       this.shobj = ret.obj
       this.ctrl = ret.control
     })
@@ -222,15 +236,17 @@ describe('mmap-object', function () {
 
     it('grows small files', function () {
       const filename = path.join(this.dir, 'grow_me')
-      const m = MmapObject(filename, 'wo', 1, 200)
-      expect(fs.statSync(filename)['size']).to.equal(1024)
-      m.obj['key'] = new Array(BigKeySize).join('big')
+      const m = MMO(filename, 'wo', 1, 100)
+      expect(fs.statSync(filename)['size']).to.equal(10240)
+      m.obj['key'] = 'value'
+      m.obj['key2'] = new Array(BigKeySize).join('big')
       expect(fs.statSync(filename)['size']).to.above(1024)
+      m.control.close()
     })
 
     it('bombs when file gets bigger than the max size', function () {
       const filename = path.join(this.dir, 'bomb_me_3')
-      const m = MmapObject(filename, 'wo', 12, 16, 4)
+      const m = MMO(filename + '_wo', 'wo', 15, 20, 4)
       m.obj['key'] = new Array(BigKeySize).join('big')
       expect(function () {
         m.obj['otherkey'] = new Array(BigKeySize).join('big')
@@ -241,9 +257,13 @@ describe('mmap-object', function () {
 
   describe('Informational methods:', function () {
     before(function () {
-      const m = MmapObject(path.join(this.dir, 'free_memory_file'))
+      const m = MMO(path.join(this.dir, 'free_memory_file'))
       this.obj = m.obj
       this.ctrl = m.control
+    })
+    
+    after(function () {
+      this.ctrl.close()
     })
 
     it('has get_free_memory', function () {
@@ -257,50 +277,12 @@ describe('mmap-object', function () {
       const final = this.ctrl.get_size()
       expect(final).to.equal(5242880)
     })
-
-    describe('file with some values', function () {
-      // These are dependent && done in sequence.
-      before(function () {
-        this.m = MmapObject(path.join(this.dir, 'bucket_counter'), 'rw', 5, 1000, 4)
-      })
-
-      it('has bucket_count', function () {
-        expect(this.m.control.bucket_count()).to.equal(4)
-        this.m.obj.one = 'value'
-        this.m.obj.two = 'value'
-        this.m.obj.three = 'value'
-        this.m.obj.four = 'value'
-        expect(this.m.control.bucket_count()).to.equal(4)
-        this.m.obj.five = 'value'
-        expect(this.m.control.bucket_count()).to.equal(8)
-      })
-
-      it('has max_bucket_count', function () {
-        const final = this.m.control.max_bucket_count()
-        expect(final).to.equal(512)
-      })
-
-      it('has load_factor', function () {
-        const final = this.m.control.load_factor()
-        expect(final).to.equal(0.625)
-      })
-
-      it('has max_load_factor', function () {
-        const final = this.m.control.max_load_factor()
-        expect(final).to.equal(1.0)
-      })
-
-      it('has fileFormatVersion', function () {
-        const version = this.m.control.fileFormatVersion();
-        expect(version).to.equal(1);
-      })
-    })
   })
 
   describe('Opener', function () {
     before(function () {
       this.testfile = path.join(this.dir, 'openertest')
-      const m = MmapObject(this.testfile, 'wo')
+      const m = MMO(this.testfile, 'wo', 10000, 5000000, 1024, SLOT2)
       const writer = m.obj
       writer['first'] = 'value for first'
       writer['second'] = 0.207879576
@@ -313,9 +295,12 @@ describe('mmap-object', function () {
       writer.should_be_deleted = 'I should not exist!'
       delete writer.should_be_deleted
       m.control.close()
-      this.n = MmapObject(this.testfile, 'ro')
-      this.reader = this.n.obj
-      this.control = this.n.control
+      this.file = MMO(this.testfile, 'ro', 10000, 5000000, 1024, SLOT3)
+      this.reader = this.file.obj
+      this.control = this.file.control
+    })
+    after(function () {
+      this.file.control.close()
     })
 
     it('works when Object.assigned', function () {
@@ -324,15 +309,16 @@ describe('mmap-object', function () {
     })
 
     it('works when inherited', function () {
-      const obj = Object.create(this.n)
+      const obj = Object.create(this.file)
       expect(obj.obj.first).to.equal('value for first')
     })
 
     it('works across copies', function () {
       const newfile = path.join(this.dir, 'copiertest')
       fs.writeFileSync(newfile, fs.readFileSync(this.testfile))
-      const m = MmapObject(newfile)
+      const m = MMO(newfile)
       expect(m.obj.first).to.equal('value for first')
+      m.control.close()
     })
 
     it('works across processes', function (done) {
@@ -347,7 +333,7 @@ describe('mmap-object', function () {
 
     it('throws exception on non-existing file', function () {
       expect(function () {
-        const obj = MmapObject('/tmp/no_file_at_all', 'ro')
+        const obj = MMO('/tmp/no_file_at_all', 'ro')
         expect(obj).to.be.null
       }).to.throw(/.tmp.no_file_at_all does not exist.|.tmp.no_file_at_all: No such file or directory/)
     })
@@ -356,7 +342,7 @@ describe('mmap-object', function () {
       const newfile = path.join(this.dir, 'zerolength')
       fs.appendFileSync(newfile, '')
       expect(function () {
-        new MmapObject(newfile)
+        new MMO(newfile)
       }).to.throw(/zerolength is an empty file./)
     })
 
@@ -364,11 +350,11 @@ describe('mmap-object', function () {
       const newfile = path.join(this.dir, 'corrupt')
       fs.appendFileSync(newfile, 'CORRUPTION')
       expect(function () {
-        MmapObject(newfile).obj
+        MMO(newfile).obj
       }).to.throw(/Can't open file .*\/corrupt: boost::interprocess_exception::library_error/)
     })
     it('read after close gives exception', function () {
-      const m = MmapObject(this.testfile)
+      const m = MMO(this.testfile, 'rw')
       expect(m.obj.first).to.equal('value for first')
       expect(m.control.isClosed()).to.be.false
       expect(m.control.isOpen()).to.be.true
@@ -414,7 +400,7 @@ describe('mmap-object', function () {
 
     it('bombs on bad file', function () {
       expect(function () {
-        const obj = MmapObject('/dev/null')
+        const obj = MMO('/dev/null', 'ro')
         expect(obj).to.not.exist
       }).to.throw(/.dev.null is not a regular file./)
     })
@@ -422,9 +408,9 @@ describe('mmap-object', function () {
     it('throws exception on bad file', function () {
       if (os.platform() !== 'linux') return this.skip()
       expect(function () {
-        const obj = MmapObject(path.join(__dirname, '..', 'testdata', 'badfile.bin'))
+        const obj = MMO(path.join(__dirname, '..', 'testdata', 'badfile.bin'))
         expect(obj).to.not.exist
-      }).to.throw(/File .*badfile.bin appears to be corrupt/)
+      }).to.throw(/File .*badfile.bin appears to be corrupt \(1\)./)
     })
 
     it('throws exception on another bad file', function () {
@@ -432,9 +418,9 @@ describe('mmap-object', function () {
         return this.skip() // Issues with these platforms on Travis
       }
       expect(function () {
-        const obj = MmapObject(path.join(__dirname, '..', 'testdata', 'badfile2.bin'))
+          const obj = new MMO(path.join(__dirname, '..', 'testdata', 'badfile2.bin'))
         expect(obj).to.not.exist
-      }).to.throw(/File .*badfile2.bin appears to be corrupt/)
+      }).to.throw(/File .*badfile2.bin appears to be corrupt \(1\)./)
     })
 
     it('throws when attempting to delete property', function () {
@@ -445,7 +431,7 @@ describe('mmap-object', function () {
     })
 
     it('can close asynchronously', function (done) {
-      MmapObject(this.testfile).control.close(done)
+      MMO(this.testfile).control.close(done)
     })
 
     it('can open and close rapidly in a subprocess', function (done) {
@@ -462,7 +448,7 @@ describe('mmap-object', function () {
     })
 
     it('throws when closing a closed object', function () {
-      const m = MmapObject(this.testfile)
+      const m = MMO(this.testfile)
       m.control.close()
       expect(function () {
         m.control.close()
@@ -470,7 +456,7 @@ describe('mmap-object', function () {
     })
 
     it('feeds error to callback when closing a closed object asynchronously', function (cb) {
-      const obj = MmapObject(this.testfile)
+      const obj = MMO(this.testfile)
       obj.control.close()
       obj.control.close(function (err) {
         expect(err).to.be.an('error')
@@ -481,60 +467,65 @@ describe('mmap-object', function () {
 
     it('implements the iterator protocol', function () {
       let count = 0
-      let done
       const iterator = this.reader[Symbol.iterator]()
-      do {
+      while (true) {
         const obj = iterator.next()
-        const key = obj[0]
-        const value = obj[1]
+        if (obj.done) break
+        const key = obj.value[0]
+        expect(key).to.exist
+        expect(key).to.not.equal('')
+        const value = obj.value[1]
+        expect(value).to.exist
+        expect(value).to.not.equal('')
         expect(this.reader[key]).to.deep.equal(value)
         count++
-        done = obj.done
-      } while(!done)
-      expect(count).to.equal(7)
+      }
+      expect(count).to.equal(6)
     })
   })
 
   describe('Object comparison', function () {
     before(function () {
       const testfile1 = path.join(this.dir, 'prototest1')
-      this.w = MmapObject(testfile1)
-      this.writer1 = this.w.obj
-      this.writer1['first'] = 'value for first'
+      this.writer1 = MMO(testfile1, 'rw')
+      this.writer1.obj['first'] = 'value for first'
       const testfile2 = path.join(this.dir, 'prototest2')
-      this.x = MmapObject(testfile2)
-      this.writer2 = this.x.obj
-      this.writer2['first'] = 'value for first'
-      this.reader1 = MmapObject(testfile1).obj
-      this.reader2 = MmapObject(testfile2).obj
+      this.writer2 = MMO(testfile2, 'rw', 10000, 5000000, 1024, SLOT2)
+      this.writer2.obj['second'] = 'value for second'
+      this.reader1 = MMO(testfile1, 'ro', 10000, 5000000, 1024, SLOT3)
+      this.reader2 = MMO(testfile2, 'ro', 10000, 5000000, 1024, SLOT4)
     })
 
     after(function () {
-      this.w.control.close()
-      this.x.control.close()
+      ['writer1', 'writer2', 'reader1', 'reader2'].forEach(o => {
+        this[o].control.close()
+      })
     })
 
-    it('all creators are equal', function () {
-      const writer1Prototype = Object.getPrototypeOf(this.writer1)
-      const writer2Prototype = Object.getPrototypeOf(this.writer2)
-      expect(writer1Prototype).to.equal(writer2Prototype)
+    it('writers are equal', function () {
+      const writer1Prototype = Object.getPrototypeOf(this.writer1.obj)
+      const writer2Prototype = Object.getPrototypeOf(this.writer2.obj)
       expect(writer1Prototype).to.equal(writer2Prototype)
       expect(writer2Prototype).to.equal(writer2Prototype)
     })
 
-    it('openers are equal', function () {
-      const reader1Prototype = Object.getPrototypeOf(this.reader1)
-      const reader2Prototype = Object.getPrototypeOf(this.reader2)
-      expect(reader1Prototype).to.equal(reader1Prototype)
+    it('readers are equal', function () {
+      const reader1Prototype = Object.getPrototypeOf(this.reader1.obj)
+      const reader2Prototype = Object.getPrototypeOf(this.reader2.obj)
       expect(reader1Prototype).to.equal(reader2Prototype)
       expect(reader2Prototype).to.equal(reader2Prototype)
     })
-    // Add a "openers and creators why not" thing here.
+
+    it('readers and writers are equal', function () {
+      const readerPrototype = Object.getPrototypeOf(this.reader1.obj)
+      const writerPrototype = Object.getPrototypeOf(this.writer1.obj)
+      expect(readerPrototype).to.equal(writerPrototype)
+    })
   })
   describe('Still can read old format', function () {
     before(function () {
       const oldFormatFile = path.join(__dirname, '..', 'testdata', `previous-format-${os.platform()}.bin`)
-      this.oldformat = MmapObject(oldFormatFile)
+      this.oldformat = MMO(oldFormatFile)
     })
 
     after(function () {
@@ -555,13 +546,14 @@ describe('mmap-object', function () {
   describe('read-write objects', function () {
     beforeEach(function () {
       this.filename = path.join(this.dir, this.currentTest.title + '_Read_writer')
-      this.shobj = MmapObject(this.filename)
+      this.shobj = MMO(this.filename, 'rw', 10000, 5000000, 1024, SLOT2)
     })
 
     afterEach(function () {
       this.shobj.control.close()
     })
     it('works across multiple processes', function (done) {
+      this.timeout(5000)
       const CHILDCOUNT = 10
       let children = []
       let state = [0, 0, 0, 0, 0]
@@ -646,34 +638,42 @@ describe('mmap-object', function () {
 
     it('cannot open wo if already open rw', function () {
       const fn = this.filename
+      let m
       expect(function () {
-        MmapObject(fn, 'rw')
-        MmapObject(fn, 'wo')
+        m = MMO(fn, 'rw')
+        MMO(fn, 'wo', 10000, 5000000, 1024, SLOT2)
       }).to.throw(/Cannot lock for write-only, another process has this file open./)
+      m.control.close()
     })
     it('cannot open wo if already open ro', function () {
       const fn = this.filename
+      let m
       expect(function () {
-        const obj = MmapObject(fn, 'rw')
+        const obj = MMO(fn, 'rw')
         obj['a'] = 'b'
         obj.control.close()
-        MmapObject(fn, 'ro')
-        MmapObject(fn, 'wo')
+        m = MMO(fn, 'ro')
+        MMO(fn, 'wo', 10000, 5000000, 1024, SLOT2)
       }).to.throw(/Cannot lock for write-only, another process has this file open./)
+      m.control.close()
     })
     it('cannot open rw if already open wo', function () {
       const fn = this.filename
+      let m
       expect(function () {
-        MmapObject(fn, 'wo')
-        MmapObject(fn, 'rw')
+        m = MMO(fn, 'wo')
+        MMO(fn, 'rw', 10000, 5000000, 1024, SLOT2)
       }).to.throw(/Cannot open, another process has this open write-only./)
+      m.control.close()
     })
     it('cannot open ro if already open wo', function () {
       const fn = this.filename
+      let m
       expect(function () {
-        MmapObject(fn, 'wo')
-        MmapObject(fn, 'ro')
+        m = MMO(fn, 'wo')
+        MMO(fn, 'ro', 10000, 5000000, 1024, SLOT2)
       }).to.throw(/Cannot open, another process has this open write-only./)
+      m.control.close()
     })
   })
 })

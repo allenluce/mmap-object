@@ -98,7 +98,7 @@ __Arguments__
   mode, 'wo' for write-only mode.
 * `initial_file_size` - *Optional* On create, the initial size of the
   file in kilobytes. If more space is needed, the file will automatically
-  be grown to a larger size. Minimum is 1k. Defaults to 1k.
+  be grown to a larger size. Minimum is 20k. Defaults to 20k.
 * `max_file_size` - *Optional* in 'wo' mode, the largest the file is
   allowed to grow, in kilobytes. If data is added beyond this limit,
   an exception is thrown.  Defaults to 5 gigabytes. Ignored in 'rw'

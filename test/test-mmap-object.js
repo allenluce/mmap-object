@@ -204,7 +204,7 @@ describe('mmap-object', function () {
     it('grows small files', function () {
       const filename = path.join(this.dir, 'grow_me')
       const m = MMO(filename, 'wo', 1, 100)
-      expect(fs.statSync(filename)['size']).to.equal(1024)
+      expect(fs.statSync(filename)['size']).to.equal(20480)
       m.obj['key'] = 'value'
       m.obj['key2'] = new Array(BigKeySize).join('big')
       expect(fs.statSync(filename)['size']).to.above(1024)
@@ -238,39 +238,6 @@ describe('mmap-object', function () {
     it('get_size', function () {
       const final = this.ctrl.get_size()
       expect(final).to.equal(5242880)
-    })
-
-    describe('file with some values', function () {
-      // These are dependent && done in sequence.
-      before(function () {
-        this.m = MMO(path.join(this.dir, 'bucket_counter'), 'rw', 5, 1000, 4)
-      })
-
-      it('bucket_count', function () {
-        expect(this.m.control.bucket_count()).to.equal(4)
-        this.m.obj.one = 'value'
-        this.m.obj.two = 'value'
-        this.m.obj.three = 'value'
-        this.m.obj.four = 'value'
-        expect(this.m.control.bucket_count()).to.equal(4)
-        this.m.obj.five = 'value'
-        expect(this.m.control.bucket_count()).to.equal(8)
-      })
-
-      it('max_bucket_count', function () {
-        const final = this.m.control.max_bucket_count()
-        expect(final).to.equal(512)
-      })
-
-      it('load_factor', function () {
-        const final = this.m.control.load_factor()
-        expect(final).to.equal(0.625)
-      })
-
-      it('max_load_factor', function () {
-        const final = this.m.control.max_load_factor()
-        expect(final).to.equal(1.0)
-      })
     })
   })
 

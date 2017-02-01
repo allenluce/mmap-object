@@ -22,6 +22,8 @@
 #include <boost/version.hpp>
 #include <nan.h>
 
+#define SHARDS 128
+
 #define LOCKINFO(lock) // cout << ::getpid() << " LOCK " << lock << endl
 #define UNLOCKINFO(lock) // cout << ::getpid() << " UNLOCK " << lock << endl
 
@@ -30,7 +32,7 @@
 #error mmap-object needs at least version 1_55 to maintain compatibility.
 #endif
 
-#define MINIMUM_FILE_SIZE 1024 // Minimum necessary to handle an mmap'd unordered_map on all platforms.
+#define MINIMUM_FILE_SIZE 20480  // Minimum necessary to handle an mmap'd unordered_map on all platforms.
 #define DEFAULT_FILE_SIZE 5ul<<20 // 5 megs
 #define DEFAULT_MAX_SIZE 5000ul<<20 // 5000 megs
 
@@ -124,14 +126,15 @@ typedef boost::unordered_map<
 typedef bip::interprocess_upgradable_mutex upgradable_mutex_type;
 
 struct Mutexes {
-  upgradable_mutex_type rw_mutex;
+  upgradable_mutex_type global_mutex;
+  upgradable_mutex_type rw_mutex[SHARDS];
   upgradable_mutex_type wo_mutex;
 };  
 
 class SharedMap : public Nan::ObjectWrap {
   friend class SharedMapControl;
 public:
-  SharedMap() : readonly(false), writeonly(false), closed(false), inWriteLock(false) {}
+  SharedMap() : readonly(false), writeonly(false), closed(false), inGlobalLock(false) {}
   virtual ~SharedMap();
   void reify_mutexes();
   static NAN_MODULE_INIT(Init) {
@@ -154,13 +157,12 @@ private:
   string file_name;
   size_t max_file_size;
   bip::managed_mapped_file *map_seg;
-  PropertyHash *property_map;
   size_t initial_bucket_count;
   bool readonly;
   bool writeonly;
   bool closed;
   
-  bool inWriteLock;
+  bool inGlobalLock;
   bip::mapped_region mutex_region;
   Mutexes *mutexes;
   
@@ -201,10 +203,6 @@ private:
   static NAN_METHOD(writeUnlock);
   static NAN_METHOD(get_free_memory);
   static NAN_METHOD(get_size);
-  static NAN_METHOD(bucket_count);
-  static NAN_METHOD(max_bucket_count);
-  static NAN_METHOD(load_factor);
-  static NAN_METHOD(max_load_factor);
   static NAN_METHOD(remove_shared_mutex);
   static v8::Local<v8::Function> init_methods(v8::Local<v8::FunctionTemplate> f_tpl);
   static inline Nan::Persistent<v8::Function> & constructor() {
@@ -256,6 +254,16 @@ SharedMap* SharedMap::unwrap(v8::Local<v8::Object> thisObj) {
   return Nan::ObjectWrap::Unwrap<SharedMap>(thisObj);
 }
 
+#define HASH(prop)                              \
+  boost::hash<std::string> string_hash;         \
+  std::size_t h = string_hash(*prop)%SHARDS
+
+#define PROPERTY_MAP(prop) \
+  HASH(prop);                                                           \
+  PropertyHash *property_map1 = self->map_seg->find_or_construct<PropertyHash>("properties")[SHARDS] \
+    (self->initial_bucket_count, hasher(), s_equal_to(), self->map_seg->get_segment_manager()); \
+  auto property_map = property_map1+h;
+
 NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
   auto self = unwrap(info.This());
   if (!self) {
@@ -274,22 +282,8 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
     Nan::ThrowError("Symbol properties are not supported.");
     return;
   }
-
+  
   size_t data_length = sizeof(Cell);
-  bip::scoped_lock<upgradable_mutex_type> lock;
-  
-  if (!self->inWriteLock) {
-    LOCKINFO("WRITE 1");
-    bip::scoped_lock<upgradable_mutex_type> lock_(self->mutexes->rw_mutex);
-    lock.swap(lock_);
-  }
-
-  BOOST_SCOPE_EXIT(self) {
-    if (!self->inWriteLock) {
-      UNLOCKINFO("WRITE 1");
-    }
-  } BOOST_SCOPE_EXIT_END;
-  
   if (value->IsString()) {
     v8::String::Utf8Value data(value);
     data_length += data.length();
@@ -300,9 +294,30 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
     return;
   }
   v8::String::Utf8Value prop(property);
+  HASH(prop);
+
+  bip::scoped_lock<upgradable_mutex_type> lock;
+  bip::sharable_lock<upgradable_mutex_type> glock;
+  
+  if (!self->inGlobalLock) {
+    LOCKINFO("WRITE 1");
+    bip::scoped_lock<upgradable_mutex_type> lock_(self->mutexes->rw_mutex[h]);
+    lock.swap(lock_);
+    bip::sharable_lock<upgradable_mutex_type> glock_(self->mutexes->global_mutex);
+    glock.swap(glock_);
+  }
+
+  BOOST_SCOPE_EXIT(self) {
+    if (!self->inGlobalLock) {
+      UNLOCKINFO("WRITE 1");
+    }
+  } BOOST_SCOPE_EXIT_END;
   Cell *c = 0;
   while(true) {
     try {
+      PropertyHash *property_map1 = self->map_seg->find_or_construct<PropertyHash>("properties")[SHARDS]
+        (self->initial_bucket_count, hasher(), s_equal_to(), self->map_seg->get_segment_manager());
+      auto property_map = property_map1+h;
       char_allocator allocer(self->map_seg->get_segment_manager());
       if (value->IsString()) {
         v8::String::Utf8Value data(value);
@@ -312,10 +327,10 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
       }
       shared_string *string_key;
       string_key = new shared_string(string(*prop).c_str(), allocer);
-      auto pair = self->property_map->insert({ *string_key, *c }); // ALLOC
+      auto pair = property_map->insert({ *string_key, *c }); // ALLOC
       if (!pair.second) {
-        self->property_map->erase(*string_key);
-        self->property_map->insert({ *string_key, *c });
+        property_map->erase(*string_key);
+        property_map->insert({ *string_key, *c });
       }
       delete c;
       break;
@@ -325,12 +340,18 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
       Nan::ThrowError(error_stream.str().c_str());
       return;
     } catch(length_error) {
-      if (!self->grow(data_length)) {
+      auto grow_size = self->map_seg->get_size() * 2;
+      if (grow_size < data_length)
+        grow_size = data_length;
+          if (!self->grow(grow_size)) {
         return;
       }
     } catch(bip::bad_alloc) {
       delete c;
-      if (!self->grow(data_length + 8000)) {
+      auto grow_size = self->map_seg->get_size() * 2;
+      if (grow_size < data_length)
+        grow_size = data_length;
+      if (!self->grow(grow_size)) {
         return;
       }
     }
@@ -385,24 +406,29 @@ NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
     Nan::ThrowError("Cannot read from closed object.");
     return;
   }
-  bip::sharable_lock<upgradable_mutex_type> lock;
-  if (!self->inWriteLock) {
+
+  PROPERTY_MAP(src);
+
+  bip::sharable_lock<upgradable_mutex_type> lock, glock;
+  if (!self->inGlobalLock) {
     LOCKINFO("SHARE 1");
-    bip::sharable_lock<upgradable_mutex_type> lock_(self->mutexes->rw_mutex);
+    bip::sharable_lock<upgradable_mutex_type> lock_(self->mutexes->rw_mutex[h]);
     lock.swap(lock_);
+    bip::sharable_lock<upgradable_mutex_type> glock_(self->mutexes->global_mutex);
+    glock.swap(glock_);
   }
   
-  BOOST_SCOPE_EXIT(self) {
-    if (!self->inWriteLock) {
+  BOOST_SCOPE_EXIT(self, h) {
+    if (!self->inGlobalLock) {
       UNLOCKINFO("SHARE 1");
     }
   } BOOST_SCOPE_EXIT_END;
 
   // If the map doesn't have it, let v8 continue the search.
-  auto pair = self->property_map->find<char_string, hasher, s_equal_to>
+  auto pair = property_map->find<char_string, hasher, s_equal_to>
     (*src, hasher(), s_equal_to());
 
-  if (pair == self->property_map->end())
+  if (pair == property_map->end())
     return;
   Cell *c = &pair->second;
   if (c->type() == STRING_TYPE) {
@@ -433,8 +459,6 @@ NAN_PROPERTY_DELETER(SharedMap::PropDeleter) {
     return;
   }
   
-  v8::String::Utf8Value src(property);
-
   auto self = unwrap(info.This());
   if (!self)
     return;
@@ -448,24 +472,28 @@ NAN_PROPERTY_DELETER(SharedMap::PropDeleter) {
     Nan::ThrowError("Cannot delete from closed object.");
     return;
   }
+  
+  v8::String::Utf8Value prop(property);
+  PROPERTY_MAP(prop);
+  
   bip::scoped_lock<upgradable_mutex_type> lock;
-  if (!self->inWriteLock) {
+  bip::sharable_lock<upgradable_mutex_type> glock;
+  if (!self->inGlobalLock) {
     LOCKINFO("WRITE 2");
-    bip::scoped_lock<upgradable_mutex_type> lock_(self->mutexes->rw_mutex);
+    bip::scoped_lock<upgradable_mutex_type> lock_(self->mutexes->rw_mutex[h]);
     lock.swap(lock_);
   }
 
-  BOOST_SCOPE_EXIT(self) {
-    if (!self->inWriteLock) {
+  BOOST_SCOPE_EXIT(self, h) {
+    if (!self->inGlobalLock) {
       UNLOCKINFO("WRITE 2");
     }
   } BOOST_SCOPE_EXIT_END;
     
-  v8::String::Utf8Value prop(property);
   shared_string *string_key;
   char_allocator allocer(self->map_seg->get_segment_manager());
   string_key = new shared_string(string(*prop).c_str(), allocer);
-  self->property_map->erase(*string_key);
+  property_map->erase(*string_key);
 }
 
 NAN_PROPERTY_ENUMERATOR(SharedMap::PropEnumerator) {
@@ -479,27 +507,41 @@ NAN_PROPERTY_ENUMERATOR(SharedMap::PropEnumerator) {
     return;
   }
 
+  bip::scoped_lock<upgradable_mutex_type> lock;
+  bip::sharable_lock<upgradable_mutex_type> glock;
+  if (!self->inGlobalLock) {
+    LOCKINFO("WRITE 4");
+    bip::scoped_lock<upgradable_mutex_type> lock_(self->mutexes->global_mutex);
+    lock.swap(lock_);
+  }
+
+  BOOST_SCOPE_EXIT(self) {
+    if (!self->inGlobalLock) {
+      UNLOCKINFO("WRITE 4");
+    }
+  } BOOST_SCOPE_EXIT_END;
+
   int i = 0;
-  bip::sharable_lock<upgradable_mutex_type> lock(self->mutexes->rw_mutex);
-  for (auto it = self->property_map->begin(); it != self->property_map->end(); ++it) {
+  PropertyHash *property_map1 = self->map_seg->find_or_construct<PropertyHash>("properties")[SHARDS] \
+    (self->initial_bucket_count, hasher(), s_equal_to(), self->map_seg->get_segment_manager()); \
+  // Go through all the shards
+  for(int s = 0; s < SHARDS; s++) {
+    auto property_map = property_map1+s;
+    for (auto it = property_map->begin(); it != property_map->end(); ++it) {
 	  arr->Set(i++, Nan::New<v8::String>(it->first.c_str()).ToLocalChecked());
+    }
   }
   info.GetReturnValue().Set(arr);
 }
 
-#define INFO_METHOD(name, type, object) NAN_METHOD(SharedMapControl::name) { \
-    auto self = unwrap(info.This());                                    \
-    if (!self) return;                                                  \
-    bip::sharable_lock<upgradable_mutex_type> lock(self->map->mutexes->rw_mutex); \
-    info.GetReturnValue().Set((type)self->map->object->name());         \
+#define INFO_METHOD(name, type) NAN_METHOD(SharedMapControl::name) { \
+    auto self = unwrap(info.This());                                 \
+    if (!self) return;                                               \
+    info.GetReturnValue().Set((type)self->map->map_seg->name());     \
   }
 
-INFO_METHOD(get_free_memory, uint32_t, map_seg)
-INFO_METHOD(get_size, uint32_t, map_seg)
-INFO_METHOD(bucket_count, uint32_t, property_map)
-INFO_METHOD(max_bucket_count, uint32_t, property_map)
-INFO_METHOD(load_factor, float, property_map)
-INFO_METHOD(max_load_factor, float, property_map)
+INFO_METHOD(get_free_memory, uint32_t);
+INFO_METHOD(get_size, uint32_t);
 
 NAN_METHOD(SharedMapControl::remove_shared_mutex) {
   auto self = unwrap(info.This());
@@ -522,7 +564,7 @@ void SharedMap::reify_mutexes() {
     if (ex.get_error_code() == 7) { // Need to create the region
       bip::shared_memory_object::remove(mutex_name.c_str());
       shm = bip::shared_memory_object(bip::create_only, mutex_name.c_str(), bip::read_write);
-      shm.truncate(sizeof (upgradable_mutex_type));
+      shm.truncate(sizeof (Mutexes));
       mutex_region = bip::mapped_region(shm, bip::read_write);
       new (mutex_region.get_address()) Mutexes;
     } else {
@@ -535,14 +577,14 @@ void SharedMap::reify_mutexes() {
 
   mutexes = static_cast<Mutexes *>(mutex_region.get_address());
   
-  // Trial lock of rw mutex
+  // Trial lock of global mutex
   try {
     LOCKINFO("WRITE 3");
     BOOST_SCOPE_EXIT(mutex_name) {
       UNLOCKINFO("WRITE 3");
     } BOOST_SCOPE_EXIT_END;
-    
-    bip::scoped_lock<upgradable_mutex_type> lock(mutexes->rw_mutex, boost::get_system_time() + boost::posix_time::seconds(1));
+
+    bip::scoped_lock<upgradable_mutex_type> lock(mutexes->global_mutex, boost::get_system_time() + boost::posix_time::seconds(1));
     if (lock == 0) { // Didn't grab. May be messed up.
       new (mutex_region.get_address()) Mutexes;
       LOCKINFO("WRITE 3 MESSED UP");
@@ -571,7 +613,6 @@ NAN_METHOD(SharedMapControl::Open) {
     }
     return;
   }
-  
   Nan::Utf8String filename(info[0]->ToString());
   Nan::Utf8String mode(info[1]->ToString());
   size_t initial_file_size = ((int)info[2]->Int32Value()) * 1024;
@@ -599,11 +640,10 @@ NAN_METHOD(SharedMapControl::Open) {
   d->reify_mutexes(); // Get these set up before proceeding.
   d->max_file_size = max_file_size;
   d->initial_bucket_count = initial_bucket_count;
-  
   struct stat buf;
 
   // So we don't try to double-create the file.
-  bip::scoped_lock<upgradable_mutex_type> lock(d->mutexes->rw_mutex);
+  bip::scoped_lock<upgradable_mutex_type> lock(d->mutexes->global_mutex);
   int s = stat(*filename, &buf);
   if (s == 0) {
     if (!S_ISREG(buf.st_mode)) {
@@ -636,16 +676,15 @@ NAN_METHOD(SharedMapControl::Open) {
 
   try {
     d->map_seg = new bip::managed_mapped_file(bip::open_or_create, string(*filename).c_str(), initial_file_size);
-    d->property_map = d->map_seg->find_or_construct<PropertyHash>("properties")
-      (initial_bucket_count, hasher(), s_equal_to(), d->map_seg->get_segment_manager());
     d->map_seg->flush();
   } catch(bip::interprocess_exception &ex){
     ostringstream error_stream;
     error_stream << "Can't open file " << *filename << ": " << ex.what();
     Nan::ThrowError(error_stream.str().c_str());
     return;
+  } catch(bip::bad_alloc) {
+    return;
   }
- 
   c->Wrap(info.This());
   auto map_obj = SharedMap::NewInstance();
     
@@ -684,7 +723,6 @@ bool SharedMap::grow(size_t size) {
     return false;
   }
   map_seg = new bip::managed_mapped_file(bip::open_only, file_name.c_str());
-  property_map = map_seg->find<PropertyHash>("properties").first;
   closed = false;
   return true;
 }
@@ -703,7 +741,12 @@ NAN_METHOD(SharedMapControl::Close) {
   auto self = unwrap(info.This());
   if (!self)
     return;
-  bip::scoped_lock<upgradable_mutex_type> lock(self->map->mutexes->rw_mutex);
+  LOCKINFO("CLOSE");
+  bip::scoped_lock<upgradable_mutex_type> lock(self->map->mutexes->global_mutex);
+  BOOST_SCOPE_EXIT(self) {
+    UNLOCKINFO("CLOSE");
+  } BOOST_SCOPE_EXIT_END;
+
   if (self->map->closed) {
     Nan::ThrowError("Attempted to close a closed object.");
     return;
@@ -743,8 +786,8 @@ NAN_METHOD(SharedMapControl::writeUnlock) {
   auto self = unwrap(info[0].As<v8::Object>());
   if (!self)
     return;
-  self->map->inWriteLock = false;
-  self->map->mutexes->rw_mutex.unlock();
+  self->map->inGlobalLock = false;
+  self->map->mutexes->global_mutex.unlock();
   UNLOCKINFO("WRITE 5");
 }
 
@@ -761,8 +804,8 @@ NAN_METHOD(SharedMapControl::writeLock) {
   // Send it as callback.
   v8::Local<v8::Value> argv[1] = {boundFunc};
 
-  self->map->mutexes->rw_mutex.lock();
-  self->map->inWriteLock = true;
+  self->map->mutexes->global_mutex.lock();
+  self->map->inGlobalLock = true;
   LOCKINFO("WRITE 5");
   callback->Call(1, argv);
 }
@@ -775,10 +818,6 @@ v8::Local<v8::Function> SharedMapControl::init_methods(v8::Local<v8::FunctionTem
   Nan::SetPrototypeMethod(f_tpl, "remove_shared_mutex", remove_shared_mutex);
   Nan::SetPrototypeMethod(f_tpl, "get_free_memory", get_free_memory);
   Nan::SetPrototypeMethod(f_tpl, "get_size", get_size);
-  Nan::SetPrototypeMethod(f_tpl, "bucket_count", bucket_count);
-  Nan::SetPrototypeMethod(f_tpl, "max_bucket_count", max_bucket_count);
-  Nan::SetPrototypeMethod(f_tpl, "load_factor", load_factor);
-  Nan::SetPrototypeMethod(f_tpl, "max_load_factor", max_load_factor);
   f_tpl->InstanceTemplate()->SetInternalFieldCount(1);
   auto fun = Nan::GetFunction(f_tpl).ToLocalChecked();
   constructor().Reset(fun);

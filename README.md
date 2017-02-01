@@ -1,5 +1,7 @@
 # One object, many processes
 
+# NOTE: THIS IS A PRE-RELEASE!  USE AS YOUR OWN RISK!
+
 [![Build Status](https://travis-ci.org/allenluce/mmap-object.svg?branch=master)](https://travis-ci.org/allenluce/mmap-object)
 
 This module maps Javascript objects into shared memory for
@@ -57,7 +59,7 @@ compiler (like GCC 4.8 or better) to build the module.
 
 ## Installation
 
-    npm install mmap-object
+    npm install mmap-object@next
 
 ## Usage
 

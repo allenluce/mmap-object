@@ -1,15 +1,13 @@
-# Shared Memory Objects
+# One object, many processes
 
 [![Build Status](https://travis-ci.org/allenluce/mmap-object.svg?branch=master)](https://travis-ci.org/allenluce/mmap-object)
-
-Super-fast file-based sharing of Javascript objects among multiple
-processes.
 
 This module maps Javascript objects into shared memory for
 simultaneous access by different Node processes running on the same
 machine. Shared memory is loaded via
-[mmap](https://en.wikipedia.org/wiki/Mmap).  Object access is mediated
-by Boost's unordered map class for speedy accesses.
+[mmap](https://en.wikipedia.org/wiki/Mmap) and persists on disk after
+closing.  Object access is mediated by Boost's unordered map class for
+speedy accesses.
 
 Data is lazily loaded as needed so opening even a huge file takes no
 time at all.
@@ -30,7 +28,7 @@ Read it from another process:
 
 ```js
 const MMO = require('mmap-object')
-let {control, obj} = new MMO('shared_file') // Creates the file
+let {control, obj} = new MMO('shared_file')
 
 for (key of obj) {
 obj[1] = 'hey'
@@ -43,11 +41,12 @@ control.close()
 
 ## Performance mode
 
-Read-only:
-- Removes all locking. Disallows any writes into the DB.
+*Read-only.* Removes all locking. Disallows any writes into the
+DB. This is for when you have many processes that will be reading and
+none writing.
 
-let {control, obj} = require('mmap-object')
-
+    const MMO = require('mmap-object')
+    let {control, obj} = new MMO('shared_file', 'ro')
 
 ## Requirements
 
@@ -88,8 +87,9 @@ console.log(`My value is ${read_only_shared_object.new_key}`)
 ### MMO(path, [mode], [initial_file_size], [max_file_size], [initial_bucket_count])
 
 Opens an existing file or creates a new file mapped into shared
-memory. Returns an object that provides access to the shared
-memory. Throws an exception on error.
+memory. Returns an object with two keys: `obj` for access to the
+shared memory and `control` for access to the control object. Throws
+an exception on error.
 
 __Arguments__
 
@@ -98,7 +98,7 @@ __Arguments__
   mode, 'wo' for write-only mode.
 * `initial_file_size` - *Optional* On create, the initial size of the
   file in kilobytes. If more space is needed, the file will automatically
-  be grown to a larger size. Minimum is 20k. Defaults to 20k.
+  be grown to a larger size. Minimum is 10k. Defaults to 10k.
 * `max_file_size` - *Optional* in 'wo' mode, the largest the file is
   allowed to grow, in kilobytes. If data is added beyond this limit,
   an exception is thrown.  Defaults to 5 gigabytes. Ignored in 'rw'
@@ -113,14 +113,15 @@ __Example__
 
 ```js
 // Create a 500K map for 300 objects.
-const obj = new Shared.Create("/tmp/sharedmem", 500, 300)
+const o = new MMO("/tmp/sharedmem", 500, 300)
+const shared_object = o.obj
+const control = o.control
 ```
 
 A file can be opened read-only only if no processes have it currently
 opened read-write. Once opened read-only, it can no longer be opened
 on a read-write basis. Any attempts to set properties on a read-only
 object will fail with an exception.
-
 
 ## Control
 
@@ -142,21 +143,6 @@ __Example__
 obj.close()
 ```
 
-### isData()
-
-When iterating, use `isData()` to tell if a particular key is real
-data or one of the underlying methods on the shared object:
-
-```js
-  const obj = new Shared.Open("/tmp/sharedmem")
-
-  for (let key in obj) {
-    if (obj.isData(key)) { // Only show actual data
-        console.log(key + ': ' + obj[key])
-    }
-  }
-```
-
 ### isOpen()
 
 Return true if this object is currently open.
@@ -173,25 +159,10 @@ Number of bytes of free storage left in the shared object file.
 
 The size of the storage in the shared object file, in bytes.
 
-### bucket_count()
-
-The number of buckets currently allocated in the underlying hash structure.
-
-### max_bucket_count()
-
-The maximum number of buckets that can be allocated in the underlying hash structure.
-
-### load_factor()
-
-The average number of elements per bucket.
-
-### max_load_factor()
-
-The current maximum load factor.
-
 ## Read-only mode
 
-This is a convenience/safety mode. Any writes to the object will produce an error.
+This is a convenience/safety mode. Any writes to the object will
+produce an error.
 
 ## Write-only mode
 
@@ -210,16 +181,17 @@ necessary (up to `max_file_size`).
 
 ## Limitations
 
-_It is strongly recommended_ to pass in the number of keys you expect
-to write when creating the object with `Create`. If you don't do this,
-the object will resize as you fill it up. This can be a very
-time-consuming process and can result in fragmentation within the
-shared memory object and a larger final file size.
-
 Object values may be only string or number values. Attempting to set
 a different type value results in an exception.
 
 Symbols are not supported as properties.
+
+Inter-process locking is unstable on macOS.  You can have a single
+process write the file then close it and several other processes open
+it up read-only, but multiple writers don't seem to work.
+
+Shared memory mediates access to the objects so you cannot safely
+share a read-write file across a mounted volume (NFS, SMB, etc).
 
 ## Publishing a binary release
 
@@ -245,14 +217,3 @@ Set BOOST_ROOT environment variable.
 bootstrap
 b2 --build-type=complete
 ```
-
-====
-
-Limitations:
-
-Inter-process locking is unstable on OSX.  You can have a single
-process write the file then close it and several other processes open
-it up read-only, but multiple writers won't cut it.
-
-Shared memory mediates access to the objects so you cannot safely
-share a read-write file across a mounted volume (NFS, SMB, etc).

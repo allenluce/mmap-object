@@ -120,9 +120,9 @@ describe('mmap-object', function () {
       }).to.throw(/Symbol properties are not supported./)
     })
 
-    it('bombs when file cannot hold enough stuff', function () {
+    it('bombs when rw file cannot hold enough stuff', function () {
       const filename = path.join(this.dir, 'bomb_me')
-      const m = MMO(filename, 'rw', 10, 20, 4)
+      const m = MMO(filename, 'rw', 15, 2000, 1)
       m.obj['key'] = new Array(BigKeySize).join('big')
       expect(function () {
         m.obj['otherkey'] = new Array(BigKeySize).join('big')
@@ -204,15 +204,15 @@ describe('mmap-object', function () {
     it('grows small files', function () {
       const filename = path.join(this.dir, 'grow_me')
       const m = MMO(filename, 'wo', 1, 100)
-      expect(fs.statSync(filename)['size']).to.equal(20480)
+      expect(fs.statSync(filename)['size']).to.equal(10240)
       m.obj['key'] = 'value'
       m.obj['key2'] = new Array(BigKeySize).join('big')
       expect(fs.statSync(filename)['size']).to.above(1024)
     })
 
     it('bombs when file gets bigger than the max size', function () {
-      const filename = path.join(this.dir, 'bomb_me')
-      const m = MMO(filename + "_wo", 'wo', 10, 20, 4)
+      const filename = path.join(this.dir, 'bomb_me_again')
+      const m = MMO(filename + '_wo', 'wo', 15, 20, 4)
       m.obj['key'] = new Array(BigKeySize).join('big')
       expect(function () {
         m.obj['otherkey'] = new Array(BigKeySize).join('big')

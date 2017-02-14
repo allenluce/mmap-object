@@ -255,6 +255,7 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
   } catch(FileTooLarge) {
     Nan::ThrowError("File grew too large.");
   }
+  info.GetReturnValue().Set(value);
 }
 
 #define STRINGINDEX                                             \

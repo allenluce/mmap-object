@@ -822,6 +822,7 @@ NAN_METHOD(SharedMapControl::writeLock) {
   self->map->inGlobalLock = true;
   LOCKINFO("WRITE 5");
   callback->Call(1, argv);
+  delete callback;
 }
 
 v8::Local<v8::Function> SharedMapControl::init_methods(v8::Local<v8::FunctionTemplate> f_tpl) {

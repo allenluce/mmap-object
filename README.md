@@ -58,7 +58,6 @@ delete shared_object['new_key']
 
 shared_object.close()
 
-
 // Read a file
 const read_only_shared_object = new Shared.Open('filename')
 
@@ -91,7 +90,7 @@ __Example__
 
 ```js
 // Create a 500K map for 300 objects.
-const obj = new Shared.Create("/tmp/sharedmem", 500, 300)
+const obj = new Shared.Create('/tmp/sharedmem', 500, 300)
 ```
 
 ### new Open(path)
@@ -111,7 +110,7 @@ __Example__
 
 ```js
 // Open up that shared file
-const obj = new Shared.Open("/tmp/sharedmem")
+const obj = new Shared.Open('/tmp/sharedmem')
 ```
 
 ### close()
@@ -123,10 +122,21 @@ to remove any unneeded space that may have been allocated.
 It's important to close your unused shared files in long-running
 processes. Not doing so keeps shared memory from being freed.
 
+The closing of very large objects (a few gigabytes and up) may take
+some time (hundreds to thousands of milliseconds). To prevent blocking
+the main thread, pass a callback to `close()`. The call to `close()`
+will return immediately while the callback will be called after the
+underlying `munmap()` operation completes. Any error will be given as
+the first argument to the callback.
+
 __Example__
 
 ```js
-obj.close()
+obj.close(function (err) {
+  if (err) {
+    console.error(`Error closing object: ${err}`)
+  }
+})
 ```
 
 ### isData()
@@ -135,13 +145,13 @@ When iterating, use `isData()` to tell if a particular key is real
 data or one of the underlying methods on the shared object:
 
 ```js
-  const obj = new Shared.Open("/tmp/sharedmem")
+const obj = new Shared.Open('/tmp/sharedmem')
 
-  for (let key in obj) {
-    if (obj.isData(key)) { // Only show actual data
-        console.log(key + ': ' + obj[key])
-    }
+for (let key in obj) {
+  if (obj.isData(key)) { // Only show actual data
+      console.log(key + ': ' + obj[key])
   }
+}
 ```
 
 

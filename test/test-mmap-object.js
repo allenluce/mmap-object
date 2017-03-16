@@ -311,12 +311,27 @@ describe('mmap-object', function () {
       }).to.throw(/Cannot delete from read-only object./)
     })
 
+    it('can close asynchronously', function (cb) {
+      const obj = new MmapObject.Open(this.testfile)
+      obj.close(cb)
+    })
+
     it('throws when closing a closed object', function () {
       const obj = new MmapObject.Open(this.testfile)
       obj.close()
       expect(function () {
         obj.close()
       }).to.throw(/Attempted to close a closed object./)
+    })
+
+    it('feeds error to callback when closing a closed object asynchronously', function (cb) {
+      const obj = new MmapObject.Open(this.testfile)
+      obj.close()
+      obj.close(function (err) {
+        expect(err).to.be.an('error')
+        expect(err).to.match(/Attempted to close a closed object./)
+        cb()
+      })
     })
 
     it('can differentiate between library methods and data', function () {

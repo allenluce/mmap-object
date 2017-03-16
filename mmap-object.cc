@@ -515,17 +515,37 @@ void SharedMap::grow(size_t size) {
   closed = false;
 }
 
+struct CloseWorker : public Nan::AsyncWorker {
+  bip::managed_mapped_file *map_seg;
+  string file_name;
+  CloseWorker(Nan::Callback *callback, bip::managed_mapped_file *map_seg, string file_name)
+    : AsyncWorker(callback), map_seg(map_seg), file_name(file_name) {}
+  virtual void Execute() { // May run in a separate thread
+    bip::managed_mapped_file::shrink_to_fit(file_name.c_str());
+    map_seg->flush();
+    delete map_seg;
+  }
+};
 
 NAN_METHOD(SharedMap::Close) {
   auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
-  if (self->closed) {
-    Nan::ThrowError("Attempted to close a closed object.");
-    return;
-  }
+  auto callback = new Nan::Callback(info[0].As<v8::Function>());
+  auto closer = new CloseWorker(callback, self->map_seg, self->file_name);
 
-  bip::managed_mapped_file::shrink_to_fit(self->file_name.c_str());
-  self->map_seg->flush();
-  delete self->map_seg;
+  if (info[0]->IsFunction()) { // Close asynchronously
+    if (self->closed) {
+      v8::Local<v8::Value> argv[1] = {Nan::Error("Attempted to close a closed object.")};
+      callback->Call(1, argv);
+      return;
+    }
+    AsyncQueueWorker(closer);
+  } else {
+    if (self->closed) {
+      Nan::ThrowError("Attempted to close a closed object.");
+      return;
+    }
+    closer->Execute();
+  }  
   self->map_seg = NULL;
   self->closed = true;
 }

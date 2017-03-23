@@ -14,6 +14,10 @@ const which = require('which')
 const BigKeySize = 1000
 const BiggerKeySize = 10000
 
+const SLOT2 = 0x710000000000
+const SLOT3 = 0x720000000000
+const SLOT4 = 0x730000000000
+
 describe('mmap-object', function () {
   before(function () {
     temp.track()
@@ -23,7 +27,7 @@ describe('mmap-object', function () {
   describe('Writer', function () {
     beforeEach(function () {
       this.filename = path.join(this.dir, this.currentTest.title)
-      const ret = MMO(this.filename)
+      const ret = MMO(this.filename, 'rw', 10000, 5000000, 1024, SLOT2)
       this.shobj = ret.obj
       this.ctrl = ret.control
     })
@@ -130,6 +134,13 @@ describe('mmap-object', function () {
       m.control.close()
     })
 
+    it('bombs when base mapping address is bad', function () {
+      const filename = path.join(this.dir, 'throw_me')
+      expect(function () {
+        MMO(filename, 'rw', 15, 2000, 1, 1)
+      }).to.throw(/mmap failure: boost::interprocess_exception::library_error /)
+    })
+
     it('allows numbers as property names', function () {
       this.shobj[1] = 'what'
       expect(this.shobj[1]).to.equal('what')
@@ -139,7 +150,7 @@ describe('mmap-object', function () {
   describe('Write-onlyer', function () {
     beforeEach(function () {
       this.filename = path.join(this.dir, this.currentTest.title)
-      const ret = MMO(this.filename, 'wo')
+      const ret = MMO(this.filename, 'wo', 10000, 5000000, 1024, SLOT2)
       this.shobj = ret.obj
       this.ctrl = ret.control
     })
@@ -208,6 +219,7 @@ describe('mmap-object', function () {
       m.obj['key'] = 'value'
       m.obj['key2'] = new Array(BigKeySize).join('big')
       expect(fs.statSync(filename)['size']).to.above(1024)
+      m.control.close()
     })
 
     it('bombs when file gets bigger than the max size', function () {
@@ -228,6 +240,10 @@ describe('mmap-object', function () {
       this.ctrl = m.control
     })
 
+    after(function () {
+      this.ctrl.close()
+    })
+
     it('get_free_memory', function () {
       const initial = this.ctrl.get_free_memory()
       this.obj.gfm = new Array(BigKeySize).join('Data')
@@ -244,7 +260,7 @@ describe('mmap-object', function () {
   describe('Opener', function () {
     before(function () {
       this.testfile = path.join(this.dir, 'openertest')
-      const m = MMO(this.testfile, 'wo')
+      const m = MMO(this.testfile, 'wo', 10000, 5000000, 1024, SLOT2)
       const writer = m.obj
       writer['first'] = 'value for first'
       writer['second'] = 0.207879576
@@ -257,8 +273,11 @@ describe('mmap-object', function () {
       writer.should_be_deleted = 'I should not exist!'
       delete writer.should_be_deleted
       m.control.close()
-      const n = MMO(this.testfile, 'ro')
-      this.reader = n.obj
+      this.file = MMO(this.testfile, 'ro', 10000, 5000000, 1024, SLOT3)
+      this.reader = this.file.obj
+    })
+    after(function () {
+      this.file.control.close()
     })
 
     it('works when Object.assigned', function () {
@@ -271,6 +290,7 @@ describe('mmap-object', function () {
       fs.writeFileSync(newfile, fs.readFileSync(this.testfile))
       const m = MMO(newfile)
       expect(m.obj.first).to.equal('value for first')
+      m.control.close()
     })
 
     it('works across processes', function (done) {
@@ -290,7 +310,7 @@ describe('mmap-object', function () {
       }).to.throw(/.tmp.no_file_at_all does not exist.|.tmp.no_file_at_all: No such file or directory/)
     })
     it('read after close gives exception', function () {
-      const m = MMO(this.testfile)
+      const m = MMO(this.testfile, 'rw')
       expect(m.obj.first).to.equal('value for first')
       expect(m.control.isClosed()).to.be.false
       expect(m.control.isOpen()).to.be.true
@@ -336,7 +356,7 @@ describe('mmap-object', function () {
 
     it('bombs on bad file', function () {
       expect(function () {
-        const obj = MMO('/dev/null')
+        const obj = MMO('/dev/null', 'ro')
         expect(obj).to.not.exist
       }).to.throw(/.dev.null is not a regular file./)
     })
@@ -375,39 +395,38 @@ describe('mmap-object', function () {
   describe('Object comparison', function () {
     before(function () {
       const testfile1 = path.join(this.dir, 'prototest1')
-      this.w = MMO(testfile1, 'rw')
-      this.writer1 = this.w.obj
-      this.writer1['first'] = 'value for first'
+      this.writer1 = MMO(testfile1, 'rw')
+      this.writer1.obj['first'] = 'value for first'
       const testfile2 = path.join(this.dir, 'prototest2')
-      this.x = MMO(testfile2, 'rw')
-      this.writer2 = this.x.obj
-      this.writer2['second'] = 'value for second'
-      this.reader1 = MMO(testfile1, 'ro').obj
-      this.reader2 = MMO(testfile2, 'ro').obj
+      this.writer2 = MMO(testfile2, 'rw', 10000, 5000000, 1024, SLOT2)
+      this.writer2.obj['second'] = 'value for second'
+      this.reader1 = MMO(testfile1, 'ro', 10000, 5000000, 1024, SLOT3)
+      this.reader2 = MMO(testfile2, 'ro', 10000, 5000000, 1024, SLOT4)
     })
 
     after(function () {
-      this.w.control.close()
-      this.x.control.close()
+      ['writer1', 'writer2', 'reader1', 'reader2'].forEach(o => {
+        this[o].control.close()
+      })
     })
 
     it('writers are equal', function () {
-      const writer1Prototype = Object.getPrototypeOf(this.writer1)
-      const writer2Prototype = Object.getPrototypeOf(this.writer2)
+      const writer1Prototype = Object.getPrototypeOf(this.writer1.obj)
+      const writer2Prototype = Object.getPrototypeOf(this.writer2.obj)
       expect(writer1Prototype).to.equal(writer2Prototype)
       expect(writer2Prototype).to.equal(writer2Prototype)
     })
 
     it('readers are equal', function () {
-      const reader1Prototype = Object.getPrototypeOf(this.reader1)
-      const reader2Prototype = Object.getPrototypeOf(this.reader2)
+      const reader1Prototype = Object.getPrototypeOf(this.reader1.obj)
+      const reader2Prototype = Object.getPrototypeOf(this.reader2.obj)
       expect(reader1Prototype).to.equal(reader2Prototype)
       expect(reader2Prototype).to.equal(reader2Prototype)
     })
 
     it('readers and writers are equal', function () {
-      const readerPrototype = Object.getPrototypeOf(this.reader1)
-      const writerPrototype = Object.getPrototypeOf(this.writer1)
+      const readerPrototype = Object.getPrototypeOf(this.reader1.obj)
+      const writerPrototype = Object.getPrototypeOf(this.writer1.obj)
       expect(readerPrototype).to.equal(writerPrototype)
     })
   })
@@ -443,7 +462,7 @@ describe('mmap-object', function () {
   describe('read-write objects', function () {
     beforeEach(function () {
       this.filename = path.join(this.dir, this.currentTest.title)
-      this.shobj = MMO(this.filename)
+      this.shobj = MMO(this.filename, 'rw', 10000, 5000000, 1024, SLOT2)
     })
 
     afterEach(function () {
@@ -521,34 +540,42 @@ describe('mmap-object', function () {
 
     it('cannot open wo if already open rw', function () {
       const fn = this.filename
+      let m
       expect(function () {
-        MMO(fn, 'rw')
-        MMO(fn, 'wo')
+        m = MMO(fn, 'rw')
+        MMO(fn, 'wo', 10000, 5000000, 1024, SLOT2)
       }).to.throw(/Cannot lock for write-only, another process has this file open./)
+      m.control.close()
     })
     it('cannot open wo if already open ro', function () {
       const fn = this.filename
+      let m
       expect(function () {
         const obj = MMO(fn, 'rw')
         obj['a'] = 'b'
         obj.control.close()
-        MMO(fn, 'ro')
-        MMO(fn, 'wo')
+        m = MMO(fn, 'ro')
+        MMO(fn, 'wo', 10000, 5000000, 1024, SLOT2)
       }).to.throw(/Cannot lock for write-only, another process has this file open./)
+      m.control.close()
     })
     it('cannot open rw if already open wo', function () {
       const fn = this.filename
+      let m
       expect(function () {
-        MMO(fn, 'wo')
-        MMO(fn, 'rw')
+        m = MMO(fn, 'wo')
+        MMO(fn, 'rw', 10000, 5000000, 1024, SLOT2)
       }).to.throw(/Cannot open, another process has this open write-only./)
+      m.control.close()
     })
     it('cannot open ro if already open wo', function () {
       const fn = this.filename
+      let m
       expect(function () {
-        MMO(fn, 'wo')
-        MMO(fn, 'ro')
+        m = MMO(fn, 'wo')
+        MMO(fn, 'ro', 10000, 5000000, 1024, SLOT2)
       }).to.throw(/Cannot open, another process has this open write-only./)
+      m.control.close()
     })
   })
 })

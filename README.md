@@ -97,7 +97,7 @@ It's fast. This benchmark was run with Redis and Aerospike
 
 ## API
 
-### MMO(path, [mode], [initial_file_size], [max_file_size], [initial_bucket_count])
+### MMO(path, [mode], [initial_file_size], [max_file_size], [initial_bucket_count], [map_address])
 
 Opens an existing file or creates a new file mapped into shared
 memory. Returns an object with two keys: `obj` for access to the
@@ -121,6 +121,12 @@ __Arguments__
   [Boost unordered_map](http://www.boost.org/doc/libs/1_38_0/doc/html/boost/unordered_map.html).
   Defaults to 1024. Set this to the number of keys you expect to
   write.
+* `map_address` - macOS only, *Optional* If you open more than one file, you have
+  to give each file a non-default map_address. The default address is
+  0x700000000000. Typically, using a sequence of addresses starting
+  with 0x700000100000, 0x700000200000, 0x700000300000, etc. should
+  work fine. Note that the same file among multiple processes must
+  have the same map_address in order to work.
 
 __Example__
 
@@ -210,9 +216,9 @@ a different type value results in an exception.
 
 Symbols are not supported as properties.
 
-Inter-process locking is unstable on macOS.  You can have a single
-process write the file then close it and several other processes open
-it up read-only, but multiple writers don't seem to work.
+macOS doesn't properly map shared mutexes unless fixed at a specific
+address. As a workaround you can feed specific addresses to open
+calls.
 
 Shared memory mediates access to the objects so you cannot safely
 share a read-write file across a mounted volume (NFS, SMB, etc).

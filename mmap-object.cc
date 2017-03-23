@@ -554,7 +554,7 @@ NAN_METHOD(SharedMapControl::remove_shared_mutex) {
   bip::shared_memory_object::remove(mutex_name.c_str());
 }
 
-#define DEFAULT_BASE 0x700000000000
+#define DEFAULT_BASE 0x400000000000
 
 bool SharedMap::reify_mutexes(uint64_t base_address) {
   string mutex_name(file_name);

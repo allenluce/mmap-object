@@ -4,7 +4,7 @@ const path = require('path')
 const mmapObjPath = binary.find(path.resolve(path.join(__dirname, '../package.json')))
 const MMO = require(mmapObjPath)
 
-const SLOT2 = 0x710000000000
+const SLOT2 = 0x410000000000
 
 const filename = process.argv[2]
 

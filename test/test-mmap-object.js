@@ -14,9 +14,9 @@ const which = require('which')
 const BigKeySize = 1000
 const BiggerKeySize = 10000
 
-const SLOT2 = 0x710000000000
-const SLOT3 = 0x720000000000
-const SLOT4 = 0x730000000000
+const SLOT2 = 0x410000000000
+const SLOT3 = 0x420000000000
+const SLOT4 = 0x430000000000
 
 describe('mmap-object', function () {
   before(function () {

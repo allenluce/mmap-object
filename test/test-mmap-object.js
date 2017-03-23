@@ -135,6 +135,9 @@ describe('mmap-object', function () {
     })
 
     it('bombs when base mapping address is bad', function () {
+      if (os.platform() !== 'darwin') { // Only for macOS
+        this.skip()
+      }
       const filename = path.join(this.dir, 'throw_me')
       expect(function () {
         MMO(filename, 'rw', 15, 2000, 1, 1)

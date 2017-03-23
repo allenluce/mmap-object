@@ -349,8 +349,8 @@ describe('mmap-object', function () {
     })
 
     it('can close asynchronously', function (cb) {
-      const obj = new MmapObject.Open(this.testfile)
-      obj.close(cb)
+      const m = MMO(this.testfile)
+      m.control.close(cb)
     })
 
     it('throws when closing a closed object', function () {
@@ -362,9 +362,9 @@ describe('mmap-object', function () {
     })
 
     it('feeds error to callback when closing a closed object asynchronously', function (cb) {
-      const obj = new MmapObject.Open(this.testfile)
-      obj.close()
-      obj.close(function (err) {
+      const m = MMO(this.testfile)
+      m.control.close()
+      m.control.close(function (err) {
         expect(err).to.be.an('error')
         expect(err).to.match(/Attempted to close a closed object./)
         cb()

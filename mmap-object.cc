@@ -663,11 +663,13 @@ NAN_METHOD(SharedMapControl::Open) {
     }      
   }
   // Does something else have this held in WO?
+  LOCKINFO("OPEN WO SHARED");
   if (!d->mutexes->wo_mutex.timed_lock_sharable(boost::get_system_time() + boost::posix_time::seconds(1))) {
     Nan::ThrowError("Cannot open, another process has this open write-only.");
     return;
   }
   if (d->writeonly) { // Hold onto the WO lock exclusively.
+    LOCKINFO("OPEN WO UPGRADED");
     if (!d->mutexes->wo_mutex.timed_unlock_upgradable_and_lock(boost::get_system_time() + boost::posix_time::seconds(1))) {
       Nan::ThrowError("Cannot lock for write-only, another process has this file open.");
       return;
@@ -730,30 +732,41 @@ bool SharedMap::grow(size_t size) {
 SharedMap::~SharedMap() {
   if (!closed) {
     if (writeonly) {
+      UNLOCKINFO("OPEN WO UPGRADED");
       mutexes->wo_mutex.unlock_upgradable();
     } else {
+      LOCKINFO("OPEN WO SHARED");
       mutexes->wo_mutex.unlock_sharable();
     }
   }
 }
   
 struct CloseWorker : public Nan::AsyncWorker {
-  SharedMap *map;
-  CloseWorker(Nan::Callback *callback, SharedMap *map) : AsyncWorker(callback), map(map) {}
+  bip::managed_mapped_file *map_seg;
+  string file_name;
+  upgradable_mutex_type *wo_mutex;
+  upgradable_mutex_type *global_mutex;
+  bool writeonly;
+  CloseWorker(Nan::Callback *callback, bip::managed_mapped_file *map_seg,
+              string file_name, upgradable_mutex_type *wo_mutex,
+              upgradable_mutex_type *global_mutex, bool writeonly) :
+    AsyncWorker(callback), map_seg(map_seg), file_name(file_name),
+    wo_mutex(wo_mutex), global_mutex(global_mutex), writeonly(writeonly) {}
   virtual void Execute() { // May run in a separate thread
     LOCKINFO("CLOSE");
-    bip::scoped_lock<upgradable_mutex_type> lock(map->mutexes->global_mutex);
-    BOOST_SCOPE_EXIT(self) {
+    bip::scoped_lock<upgradable_mutex_type> lock(*global_mutex);
+    BOOST_SCOPE_EXIT(void) {
       UNLOCKINFO("CLOSE");
     } BOOST_SCOPE_EXIT_END;
-    if (map->writeonly) {
-      bip::managed_mapped_file::shrink_to_fit(map->file_name.c_str());
+    if (writeonly) {
+      bip::managed_mapped_file::shrink_to_fit(file_name.c_str());
     }
-    map->map_seg->flush();
-    delete map->map_seg;
-    map->map_seg = NULL;
-    if (map->writeonly) {
-      map->mutexes->wo_mutex.unlock();
+    map_seg->flush();
+    delete map_seg;
+    if (writeonly) {
+      wo_mutex->unlock();
+    } else {
+      wo_mutex->unlock_sharable();
     }
   }
 };
@@ -763,7 +776,9 @@ NAN_METHOD(SharedMapControl::Close) {
   if (!self)
     return;
   auto callback = new Nan::Callback(info[0].As<v8::Function>());
-  auto closer = new CloseWorker(callback, self->map);
+  auto closer = new CloseWorker(callback, self->map->map_seg, self->map->file_name,
+                                &self->map->mutexes->wo_mutex, &self->map->mutexes->global_mutex,
+                                self->map->writeonly);
 
   if (info[0]->IsFunction()) { // Close asynchronously
     if (self->map->closed) {
@@ -780,6 +795,7 @@ NAN_METHOD(SharedMapControl::Close) {
     closer->Execute();
   }  
   self->map->closed = true;
+  self->map->map_seg = NULL;
 }
 
 NAN_METHOD(SharedMapControl::isClosed) {

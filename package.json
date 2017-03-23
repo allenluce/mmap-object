@@ -12,7 +12,7 @@
     "module_path": "./lib",
     "host": "https://github.com/allenluce/mmap-object/releases/download/{version}"
   },
-  "version": "2.0.0",
+  "version": "2.1.0",
   "author": "Allen Luce",
   "repository": {
     "type": "git",

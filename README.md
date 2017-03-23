@@ -160,7 +160,7 @@ the first argument to the callback.
 __Example__
 
 ```js
-obj.close(function (err) {
+control.close(function (err) {
   if (err) {
     console.error(`Error closing object: ${err}`)
   }

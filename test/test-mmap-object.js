@@ -2,11 +2,11 @@
 /* global describe it beforeEach afterEach before after */
 const binary = require('node-pre-gyp')
 const path = require('path')
-const mmap_obj_path = binary.find(path.resolve(path.join(__dirname, '../package.json')))
-const MMO = require(mmap_obj_path)
+const mmapObjPath = binary.find(path.resolve(path.join(__dirname, '../package.json')))
+const MMO = require(mmapObjPath)
 const expect = require('chai').expect
 const temp = require('temp')
-const child_process = require('child_process')
+const childProcess = require('child_process')
 const fs = require('fs')
 const os = require('os')
 const which = require('which')
@@ -275,10 +275,10 @@ describe('mmap-object', function () {
 
     it('works across processes', function (done) {
       process.env.TESTFILE = this.testfile
-      const child = child_process.fork(which.sync('mocha'), ['./test/util-interprocess.js'])
-      child.on('exit', function (exit_code) {
+      const child = childProcess.fork(which.sync('mocha'), ['./test/util-interprocess.js'])
+      child.on('exit', function (exitCode) {
         expect(child.signalCode).to.be.null
-        expect(exit_code, 'error from util-interprocess.js').to.equal(0)
+        expect(exitCode, 'error from util-interprocess.js').to.equal(0)
         done()
       })
     })
@@ -370,21 +370,20 @@ describe('mmap-object', function () {
         cb()
       })
     })
-
   })
 
   describe('Object comparison', function () {
     before(function () {
       const testfile1 = path.join(this.dir, 'prototest1')
-      this.w = MMO(testfile1)
+      this.w = MMO(testfile1, 'rw')
       this.writer1 = this.w.obj
       this.writer1['first'] = 'value for first'
       const testfile2 = path.join(this.dir, 'prototest2')
-      this.x = MMO(testfile2)
+      this.x = MMO(testfile2, 'rw')
       this.writer2 = this.x.obj
-      this.writer2['first'] = 'value for first'
-      this.reader1 = MMO(testfile1).obj
-      this.reader2 = MMO(testfile2).obj
+      this.writer2['second'] = 'value for second'
+      this.reader1 = MMO(testfile1, 'ro').obj
+      this.reader2 = MMO(testfile2, 'ro').obj
     })
 
     after(function () {
@@ -392,22 +391,25 @@ describe('mmap-object', function () {
       this.x.control.close()
     })
 
-    it('all creators are equal', function () {
-      const writer1_prototype = Object.getPrototypeOf(this.writer1)
-      const writer2_prototype = Object.getPrototypeOf(this.writer2)
-      expect(writer1_prototype).to.equal(writer2_prototype)
-      expect(writer1_prototype).to.equal(writer2_prototype)
-      expect(writer2_prototype).to.equal(writer2_prototype)
+    it('writers are equal', function () {
+      const writer1Prototype = Object.getPrototypeOf(this.writer1)
+      const writer2Prototype = Object.getPrototypeOf(this.writer2)
+      expect(writer1Prototype).to.equal(writer2Prototype)
+      expect(writer2Prototype).to.equal(writer2Prototype)
     })
 
-    it('openers are equal', function () {
-      const reader1_prototype = Object.getPrototypeOf(this.reader1)
-      const reader2_prototype = Object.getPrototypeOf(this.reader2)
-      expect(reader1_prototype).to.equal(reader1_prototype)
-      expect(reader1_prototype).to.equal(reader2_prototype)
-      expect(reader2_prototype).to.equal(reader2_prototype)
+    it('readers are equal', function () {
+      const reader1Prototype = Object.getPrototypeOf(this.reader1)
+      const reader2Prototype = Object.getPrototypeOf(this.reader2)
+      expect(reader1Prototype).to.equal(reader2Prototype)
+      expect(reader2Prototype).to.equal(reader2Prototype)
     })
-    // Add a "openers and creators why not" thing here.
+
+    it('readers and writers are equal', function () {
+      const readerPrototype = Object.getPrototypeOf(this.reader1)
+      const writerPrototype = Object.getPrototypeOf(this.writer1)
+      expect(readerPrototype).to.equal(writerPrototype)
+    })
   })
 
   describe('Still can read old format', function () {
@@ -416,8 +418,8 @@ describe('mmap-object', function () {
       if (os.platform() !== 'linux') {
         this.skip()
       } else {
-        const old_format_file = `${__dirname}/previous-format.bin`
-        this.oldformat = MMO(old_format_file)
+        const oldFormatFile = `${__dirname}/previous-format.bin`
+        this.oldformat = MMO(oldFormatFile)
       }
     })
 
@@ -451,10 +453,10 @@ describe('mmap-object', function () {
       let children = []
       const CHILDCOUNT = 10
       for (let i = 0; i < CHILDCOUNT; i++) {
-        children[i] = child_process.fork('./test/util-rw-process.js', [this.filename])
-        children[i].on('exit', function (exit_code) {
+        children[i] = childProcess.fork('./test/util-rw-process.js', [this.filename])
+        children[i].on('exit', function (exitCode) {
           expect(children[i].signalCode).to.be.null
-          expect(exit_code, 'error from util-rw-process.js').to.equal(0)
+          expect(exitCode, 'error from util-rw-process.js').to.equal(0)
           done()
         })
       }

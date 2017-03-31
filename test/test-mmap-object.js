@@ -324,14 +324,14 @@ describe('mmap-object', function () {
       expect(function () {
         const obj = new MmapObject.Open(path.join(__dirname,'badfile.bin'))
         expect(obj).to.not.exist
-      }).to.throw(/File .*badfile.bin appears to be corrupt \(2\)./)
+      }).to.throw(/File .*badfile.bin appears to be corrupt/)
     })
 
     it('throws exception on another bad file', function () {
       expect(function () {
         const obj = new MmapObject.Open(path.join(__dirname,'badfile2.bin'))
         expect(obj).to.not.exist
-      }).to.throw(/File .*badfile2.bin appears to be corrupt \(1\)./)
+      }).to.throw(/File .*badfile2.bin appears to be corrupt/)
     })
 
     it('throws when attempting to delete property', function () {
@@ -422,19 +422,18 @@ describe('mmap-object', function () {
 
   describe('Still can read old format', function () {
     before(function () {
-      // The test file is only readable on Linux.
       if (os.platform() === 'darwin') {
-        this.skip()
-      } else {
-        const old_format_file = path.join(__dirname, 'previous-format.bin')
-        this.oldformat = new MmapObject.Open(old_format_file)
+        return this.skip()
       }
+      const old_format_file = `${__dirname}/previous-format-${os.platform()}.bin`
+      this.oldformat = new MmapObject.Open(old_format_file)
     })
 
     after(function () {
-      if (os.platform() !== 'darwin') {
-        this.oldformat.close()
+      if (os.platform() == 'darwin') {
+        return
       }
+      this.oldformat.close()
     })
 
     it('reads string properties', function () {

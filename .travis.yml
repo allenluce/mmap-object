@@ -35,8 +35,7 @@ before_install:
   - echo `git describe --tags --always HEAD`
   - if [[ $TRAVIS_BRANCH == `git describe --tags --always HEAD` ]]; then PUBLISH_BINARY=true; fi;
   - echo "Publishing binaries? " $PUBLISH_BINARY
-script:
-  - npm test
+after_success:
   - if [[ $PUBLISH_BINARY == true ]]; then node-pre-gyp package; fi;
   - if [[ $PUBLISH_BINARY == true ]]; then node-pre-gyp-github publish --release; fi;
   - node-pre-gyp clean

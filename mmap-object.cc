@@ -485,7 +485,7 @@ NAN_METHOD(SharedMap::Open) {
 
   try {
     d->map_seg = new bip::managed_mapped_file(bip::open_read_only, string(*filename).c_str());
-    if (d->map_seg->get_size() < 368) {
+    if (d->map_seg->get_size() != (unsigned long)buf.st_size) {
       ostringstream error_stream;
       error_stream << "File " << *filename << " appears to be corrupt (1).";
       Nan::ThrowError(error_stream.str().c_str());

@@ -120,7 +120,7 @@ describe('mmap-object', function () {
       }).to.throw(/Symbol properties are not supported for delete./)
     })
 
-    it('bombs on write to symbol property', function () {
+    it('throws exception on write to symbol property', function () {
       const self = this
       expect(function () {
         self.shobj[Symbol('first')] = 'what'
@@ -135,7 +135,7 @@ describe('mmap-object', function () {
       expect(fs.statSync(filename)['size']).to.above(500)
     })
 
-    it('bombs when file gets too big', function () {
+    it('throws exception when file gets too big', function () {
       const filename = path.join(this.dir, 'bomb_me')
       const smallobj = new MmapObject.Create(filename, 1, 4, 20)
       smallobj['key'] = new Array(BigKeySize).join('big')
@@ -238,11 +238,27 @@ describe('mmap-object', function () {
       })
     })
 
-    it('bombs on non-existing file', function () {
+    it('throws exception on non-existing file', function () {
       expect(function () {
         const obj = new MmapObject.Open('/tmp/no_file_at_all')
         expect(obj).to.not.exist
       }).to.throw(/.tmp.no_file_at_all does not exist.|.tmp.no_file_at_all: No such file or directory/)
+    })
+
+    it("throws exception on a zero-length file", function () {
+      const newfile = path.join(this.dir, 'zerolength')
+      fs.appendFileSync(newfile, "")
+      expect(function () {
+        const reader = new MmapObject.Open(newfile)
+      }).to.throw(/zerolength is an empty file./)
+    })
+
+    it("throws exception on a corrupt file", function () {
+      const newfile = path.join(this.dir, 'corrupt')
+      fs.appendFileSync(newfile, "CORRUPTION")
+      expect(function () {
+        const reader = new MmapObject.Open(newfile)
+      }).to.throw(/Can't open file .*\/corrupt: boost::interprocess_exception::library_error/)
     })
 
     it('read after close gives exception', function () {
@@ -297,7 +313,7 @@ describe('mmap-object', function () {
       }
     })
 
-    it('bombs on bad file', function () {
+    it('throws exception on non-file file', function () {
       expect(function () {
         const obj = new MmapObject.Open('/dev/null')
         expect(obj).to.not.exist

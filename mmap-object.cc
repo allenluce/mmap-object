@@ -469,13 +469,15 @@ NAN_METHOD(SharedMap::Open) {
 
   struct stat buf;
   int s = stat(*filename, &buf);
-  if (!S_ISREG(buf.st_mode)) {
+  if (s == -1 || !S_ISREG(buf.st_mode) || buf.st_size == 0) {
     ostringstream error_stream;
     error_stream << *filename;
-    if (s) {
-      error_stream << " does not exist.";
-    } else {
+    if (s == -1) {
+      error_stream << ": " << strerror(errno);
+    } else if (!S_ISREG(buf.st_mode)) {
       error_stream << " is not a regular file.";
+    } else {
+      error_stream << " is an empty file.";
     }
     Nan::ThrowError(error_stream.str().c_str());
     return;

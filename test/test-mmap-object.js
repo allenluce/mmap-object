@@ -258,7 +258,7 @@ describe('mmap-object', function () {
       fs.appendFileSync(newfile, "CORRUPTION")
       expect(function () {
         const reader = new MmapObject.Open(newfile)
-      }).to.throw(/Can't open file .*\/corrupt: boost::interprocess_exception::library_error/)
+      }).to.throw(/Can't open file .*corrupt: boost::interprocess_exception::library_error/)
     })
 
     it('read after close gives exception', function () {
@@ -318,6 +318,13 @@ describe('mmap-object', function () {
         const obj = new MmapObject.Open('/dev/null')
         expect(obj).to.not.exist
       }).to.throw(/.dev.null is not a regular file./)
+    })
+
+    it('throws exception on bad file', function () {
+      expect(function () {
+        const obj = new MmapObject.Open(path.join(__dirname,'badfile.bin'))
+        expect(obj).to.not.exist
+      }).to.throw(/File .*badfile.bin appears to be corrupt./)
     })
 
     it('throws when attempting to delete property', function () {
@@ -412,7 +419,7 @@ describe('mmap-object', function () {
       if (os.platform() === 'darwin') {
         this.skip()
       } else {
-        const old_format_file = `${__dirname}/previous-format.bin`
+        const old_format_file = path.join(__dirname, 'previous-format.bin')
         this.oldformat = new MmapObject.Open(old_format_file)
       }
     })

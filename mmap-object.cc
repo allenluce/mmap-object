@@ -487,6 +487,12 @@ NAN_METHOD(SharedMap::Open) {
     d->map_seg = new bip::managed_mapped_file(bip::open_read_only, string(*filename).c_str());
     auto find_map = d->map_seg->find<PropertyHash>("properties");
     d->property_map = find_map.first;
+    if (d->property_map == NULL) {
+      ostringstream error_stream;
+      error_stream << "File " << *filename << " appears to be corrupt.";
+      Nan::ThrowError(error_stream.str().c_str());
+      return;
+    }
   } catch(bip::interprocess_exception &ex){
     ostringstream error_stream;
     error_stream << "Can't open file " << *filename << ": " << ex.what();

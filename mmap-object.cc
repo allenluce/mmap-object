@@ -485,11 +485,17 @@ NAN_METHOD(SharedMap::Open) {
 
   try {
     d->map_seg = new bip::managed_mapped_file(bip::open_read_only, string(*filename).c_str());
+    if (d->map_seg->get_size() < 368) {
+      ostringstream error_stream;
+      error_stream << "File " << *filename << " appears to be corrupt (1).";
+      Nan::ThrowError(error_stream.str().c_str());
+      return;
+    }
     auto find_map = d->map_seg->find<PropertyHash>("properties");
     d->property_map = find_map.first;
     if (d->property_map == NULL) {
       ostringstream error_stream;
-      error_stream << "File " << *filename << " appears to be corrupt.";
+      error_stream << "File " << *filename << " appears to be corrupt (2).";
       Nan::ThrowError(error_stream.str().c_str());
       return;
     }

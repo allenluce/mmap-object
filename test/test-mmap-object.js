@@ -324,7 +324,14 @@ describe('mmap-object', function () {
       expect(function () {
         const obj = new MmapObject.Open(path.join(__dirname,'badfile.bin'))
         expect(obj).to.not.exist
-      }).to.throw(/File .*badfile.bin appears to be corrupt./)
+      }).to.throw(/File .*badfile.bin appears to be corrupt \(2\)./)
+    })
+
+    it('throws exception on another bad file', function () {
+      expect(function () {
+        const obj = new MmapObject.Open(path.join(__dirname,'badfile2.bin'))
+        expect(obj).to.not.exist
+      }).to.throw(/File .*badfile2.bin appears to be corrupt \(1\)./)
     })
 
     it('throws when attempting to delete property', function () {

@@ -349,6 +349,7 @@ describe('mmap-object', function () {
     })
 
     it('throws exception on bad file', function () {
+      if (os.platform() !== 'linux') return this.skip()
       expect(function () {
         const obj = new MmapObject.Open(path.join(__dirname, '..', 'testdata', 'badfile.bin'))
         expect(obj).to.not.exist

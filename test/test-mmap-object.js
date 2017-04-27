@@ -328,6 +328,9 @@ describe('mmap-object', function () {
     })
 
     it('throws exception on another bad file', function () {
+      if (os.platform() === 'darwin' && /^v[45]\./.test(process.version)) {
+        return this.skip() // Issues with these platforms on Travis
+      }
       expect(function () {
         const obj = new MmapObject.Open(path.join(__dirname,'badfile2.bin'))
         expect(obj).to.not.exist

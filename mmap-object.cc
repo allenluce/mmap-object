@@ -149,6 +149,7 @@ private:
     static Nan::Persistent<v8::Function> my_constructor;
     return my_constructor;
   }
+  friend struct CloseWorker;
 };
 
 bool isMethod(string name) {
@@ -530,38 +531,36 @@ void SharedMap::grow(size_t size) {
 }
 
 struct CloseWorker : public Nan::AsyncWorker {
-  bip::managed_mapped_file *map_seg;
-  string file_name;
-  CloseWorker(Nan::Callback *callback, bip::managed_mapped_file *map_seg, string file_name)
-    : AsyncWorker(callback), map_seg(map_seg), file_name(file_name) {}
+  SharedMap *map;
+  CloseWorker(v8::Local<v8::Value> callback, v8::Local<v8::Object> map)
+    : AsyncWorker(new Nan::Callback(callback.As<v8::Function>())),
+      map(Nan::ObjectWrap::Unwrap<SharedMap>(map)) {}
   virtual void Execute() { // May run in a separate thread
-    bip::managed_mapped_file::shrink_to_fit(file_name.c_str());
-    map_seg->flush();
-    delete map_seg;
+    if (map->closed) {
+      SetErrorMessage("Attempted to close a closed object.");
+      return;                                
+    }
+    bip::managed_mapped_file::shrink_to_fit(map->file_name.c_str());
+    map->map_seg->flush();
+    delete map->map_seg;
+    map->closed = true; // Potentially racy
+    map->map_seg = NULL;
   }
+  friend class SharedMap;
 };
 
 NAN_METHOD(SharedMap::Close) {
-  auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
-  auto callback = new Nan::Callback(info[0].As<v8::Function>());
-  auto closer = new CloseWorker(callback, self->map_seg, self->file_name);
+  auto closer = new CloseWorker(info[0], info.This());
 
   if (info[0]->IsFunction()) { // Close asynchronously
-    if (self->closed) {
-      v8::Local<v8::Value> argv[1] = {Nan::Error("Attempted to close a closed object.")};
-      callback->Call(1, argv);
-      return;
-    }
     AsyncQueueWorker(closer);
-  } else {
-    if (self->closed) {
-      Nan::ThrowError("Attempted to close a closed object.");
-      return;
-    }
-    closer->Execute();
-  }  
-  self->map_seg = NULL;
-  self->closed = true;
+    return;
+  }
+  // Close synchronously
+  closer->Execute();
+  auto msg = closer->ErrorMessage();
+  if (msg != NULL)
+    Nan::ThrowError(msg);
 }
 
 NAN_METHOD(SharedMap::isClosed) {

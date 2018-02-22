@@ -1,44 +1,40 @@
 sudo: true
 dist: trusty
 language: node_js
-compiler:
-  - gcc
-cache:
-  directories:
-    - node_modules
-node_js:
-  - '8'
-  - '7'
-  - '6'
-  - '5'
-  - '4'
+compiler: [ clang ]
+cache: { directories: [ node_modules ] }
+node_js: [ '9', '8', '7', '6', '5', '4' ]
 addons:
   apt:
-    sources:
-      - boost-latest
-      - ubuntu-toolchain-r-test
-    packages:
-      - g++-4.9
-      - libboost1.55-all-dev
+    sources: [ boost-latest,  ubuntu-toolchain-r-test ]
+    packages: [ g++-4.9, libboost1.55-all-dev ]
 env:
   global:
     # NODE_PRE_GYP_GITHUB_TOKEN
     - secure: "nQd7/IoX1Vuu3Pr3QHhqF12kW/4iXOfUdMky4lbG9QfmEhp2jhppOBUfcTOLPEN9yYWxMsvSUAgJ7Ydpd8m3EbOqQSJzlyGc6cz6CQTvEXUy8AOfLfv19UmV7nPTjA4Jk4J485JNtWSDdOYCDLM0na9WeE65N9uAfKdBMwXAaQckSrP2wX0xGgt+c8XxSkcX0Hrdjmd4si88KamgwMV5BQqVK5t3pFPooRb0d/x2aIKvkRlCmKthpS+1kTM6t0H9wxKrtLhZCz8LbL6vzd3uFIdFOEE/fHKLBDMtUsjNrJTV9yKxlvtsAj+SC1EXIjtxo2695fkM0hvYlyaieFP/iIhjBRJD2g72HG5Vd/5zBStwk1d+8mA7pDQGvI3fptn6kXJGhTdn1KcgyU2habygKdxmw4a5OW7w7HUYiko53JryGIE/ICZo/6iDYZHQFMO3SnxOj+C8hxY+BJuY3OsOeJzygJNyGRQZtEObuPW5m8SVcZOJApIBwZKKQrtvvsZ1qAIEzbede2GTPDB9zNZasP6h1AvffH0sHZ46d8hdZfj6UuQyxSIbOD+UFfpI0G8u+2MdNtt1O1Zh9Ub8QzuWWU58hbhrkepbpT9zyycneecDCxgLeFlhJBJrdP5ZrHG7rO7z3RDH8Tzb/TWXiD804GyUrIyv4fpq+eJolhKFOGg="
-os:
-  - linux
-  - osx
+os: [ linux, osx ]
 before_install:
-  - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then brew update; fi
-  - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then brew install homebrew/versions/boost155; fi
-  - export PATH=./node_modules/.bin/:$PATH
-  - PUBLISH_BINARY=false
-  - echo $TRAVIS_BRANCH
-  - echo `git describe --tags --always HEAD`
-  - if [[ $TRAVIS_BRANCH == `git describe --tags --always HEAD` ]]; then PUBLISH_BINARY=true; fi;
-  - echo "Publishing binaries? " $PUBLISH_BINARY
+  - |
+    if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then
+      brew update
+      brew install boost155
+    fi
+    export PATH=./node_modules/.bin/:$PATH
+    PUBLISH_BINARY=false
+    echo $TRAVIS_BRANCH
+    echo `git describe --tags --always HEAD`
+    if [[ $TRAVIS_BRANCH == `git describe --tags --always HEAD` ]]; then PUBLISH_BINARY=true; fi;
+install:
+  - npm install --build-from-source
 after_success:
-  - if [[ $PUBLISH_BINARY == true ]]; then node-pre-gyp package; fi;
-  - if [[ $PUBLISH_BINARY == true ]]; then node-pre-gyp-github publish --release; fi;
-  - node-pre-gyp clean
-  # Make sure binary was produced.
-  - if [[ $PUBLISH_BINARY == true ]]; then npm install --fallback-to-build=false; fi;
+  - |
+    echo "Publishing binaries?" $PUBLISH_BINARY
+    if [[ $PUBLISH_BINARY == true ]]; then
+      node-pre-gyp package
+      node-pre-gyp-github publish --release
+    fi
+    node-pre-gyp clean
+    # Make sure binary was produced.
+    if [[ $PUBLISH_BINARY == true ]]; then
+      npm install --fallback-to-build=false
+    fi

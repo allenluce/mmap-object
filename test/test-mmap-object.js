@@ -10,6 +10,7 @@ const child_process = require('child_process')
 const fs = require('fs')
 const os = require('os')
 const which = require('which')
+const async = require('async')
 
 const BigKeySize = 1000
 const BiggerKeySize = 10000
@@ -347,6 +348,19 @@ describe('mmap-object', function () {
     it('can close asynchronously', function (cb) {
       const obj = new MmapObject.Open(this.testfile)
       obj.close(cb)
+    })
+
+    it('can open and close rapidly in a subprocess', function (done) {
+      this.timeout(5000) // Can take a little longer
+      process.env.TESTFILE = this.testfile
+      async.times(10, function (n, next) {
+        const child = child_process.fork('./test/util-closer.js')
+        child.on('exit', function (exit_code) {
+          expect(child.signalCode).to.be.null
+          expect(exit_code, 'error from util-closer.js').to.equal(0)
+          next()
+        })
+      }, done)
     })
 
     it('throws when closing a closed object', function () {

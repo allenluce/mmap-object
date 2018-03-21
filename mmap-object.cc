@@ -107,6 +107,11 @@ typedef boost::unordered_map<
   map_allocator> PropertyHash;
 
 class SharedMap : public Nan::ObjectWrap {
+  SharedMap(string file_name, size_t file_size, size_t max_file_size) :
+    file_name(file_name), file_size(file_size), max_file_size(max_file_size),
+    readonly(false), closed(true) {}
+  SharedMap(string file_name) : file_name(file_name), readonly(false), closed(true) {}
+
 public:
   static NAN_MODULE_INIT(Init);
 
@@ -119,7 +124,6 @@ private:
   bool readonly;
   bool closed;
   void grow(size_t);
-  void setFilename(string);
   static NAN_METHOD(Create);
   static NAN_METHOD(Open);
   static NAN_METHOD(Close);
@@ -260,7 +264,7 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
 }
 
 #define STRINGINDEX                                             \
-  std::ostringstream ss;                                        \
+  ostringstream ss;                                             \
   ss << index;                                                  \
   auto prop = Nan::New<v8::String>(ss.str()).ToLocalChecked()
 
@@ -420,7 +424,6 @@ NAN_METHOD(SharedMap::Create) {
   size_t initial_bucket_count = (int)info[2]->Int32Value();
   size_t max_file_size = (int)info[3]->Int32Value();
   max_file_size *= 1024;
-  SharedMap *d = new SharedMap();
 
   if (file_size == 0) {
     file_size = DEFAULT_FILE_SIZE;
@@ -438,23 +441,19 @@ NAN_METHOD(SharedMap::Create) {
   if (initial_bucket_count == 0) {
     initial_bucket_count = 1024;
   }
+  SharedMap *d = new SharedMap(*filename, file_size, max_file_size);
 
   try {
     d->map_seg = new bip::managed_mapped_file(bip::open_or_create,string(*filename).c_str(), file_size);
     d->property_map = d->map_seg->find_or_construct<PropertyHash>("properties")
       (initial_bucket_count, hasher(), s_equal_to(), d->map_seg->get_segment_manager());
+    d->closed = false;
   } catch(bip::interprocess_exception &ex){
     ostringstream error_stream;
     error_stream << "Can't open file " << *filename << ": " << ex.what();
     Nan::ThrowError(error_stream.str().c_str());
     return;
   }
-
-  d->readonly = false;
-  d->closed = false;
-  d->setFilename(*filename);
-  d->file_size = file_size;
-  d->max_file_size = max_file_size;
   d->Wrap(info.This());
   info.GetReturnValue().Set(info.This());
 }
@@ -466,7 +465,6 @@ NAN_METHOD(SharedMap::Open) {
   }
 
   Nan::Utf8String filename(info[0]->ToString());
-  SharedMap *d = new SharedMap();
 
   struct stat buf;
   int s = stat(*filename, &buf);
@@ -483,6 +481,7 @@ NAN_METHOD(SharedMap::Open) {
     Nan::ThrowError(error_stream.str().c_str());
     return;
   }
+  SharedMap *d = new SharedMap(*filename);
 
   try {
     d->map_seg = new bip::managed_mapped_file(bip::open_read_only, string(*filename).c_str());
@@ -508,13 +507,8 @@ NAN_METHOD(SharedMap::Open) {
   }
   d->readonly = true;
   d->closed = false;
-  d->setFilename(*filename);
   d->Wrap(info.This());
   info.GetReturnValue().Set(info.This());
-}
-
-void SharedMap::setFilename(string fn_string) {
-  file_name = fn_string;
 }
 
 void SharedMap::grow(size_t size) {
@@ -532,9 +526,10 @@ void SharedMap::grow(size_t size) {
 
 struct CloseWorker : public Nan::AsyncWorker {
   SharedMap *map;
-  CloseWorker(v8::Local<v8::Value> callback, v8::Local<v8::Object> map)
-    : AsyncWorker(new Nan::Callback(callback.As<v8::Function>())),
-      map(Nan::ObjectWrap::Unwrap<SharedMap>(map)) {}
+  CloseWorker(Nan::Callback *&callback, v8::Local<v8::Object> map)
+    : AsyncWorker(callback), map(Nan::ObjectWrap::Unwrap<SharedMap>(map)) {
+    SaveToPersistent(uint32_t(0), map);
+  }
   virtual void Execute() { // May run in a separate thread
     if (map->closed) {
       SetErrorMessage("Attempted to close a closed object.");
@@ -550,12 +545,17 @@ struct CloseWorker : public Nan::AsyncWorker {
 };
 
 NAN_METHOD(SharedMap::Close) {
-  auto closer = new CloseWorker(info[0], info.This());
+  Nan::Callback *cb = NULL;
+  if (info[0]->IsFunction())
+    cb = new Nan::Callback(info[0].As<v8::Function>());
+
+  auto closer = new CloseWorker(cb, info.This());
 
   if (info[0]->IsFunction()) { // Close asynchronously
     AsyncQueueWorker(closer);
     return;
   }
+
   // Close synchronously
   closer->Execute();
   auto msg = closer->ErrorMessage();

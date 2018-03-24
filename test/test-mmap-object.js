@@ -351,7 +351,7 @@ describe('mmap-object', function () {
     })
 
     it('can open and close rapidly in a subprocess', function (done) {
-      this.timeout(5000) // Can take a little longer
+      this.timeout(30000) // Can take a little longer
       process.env.TESTFILE = this.testfile
       async.times(10, function (n, next) {
         const child = child_process.fork('./test/util-closer.js')

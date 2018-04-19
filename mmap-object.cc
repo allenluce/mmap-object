@@ -14,6 +14,7 @@
 #include <boost/unordered_map.hpp>
 #include <boost/version.hpp>
 #include <nan.h>
+#include "aho_corasick.hpp"
 
 #if BOOST_VERSION < 105500
 #pragma message("Found boost version " BOOST_PP_STRINGIZE(BOOST_LIB_VERSION))
@@ -156,25 +157,33 @@ private:
   friend struct CloseWorker;
 };
 
+aho_corasick::trie methodTrie;
+
 bool isMethod(string name) {
+  return methodTrie.contains(name);
+}
+
+void buildMethods() {
   string methods[] = {
-    "isClosed",
-    "isOpen",
-    "close",
-    "valueOf",
-    "toString",
+    "bucket_count",
     "close",
     "get_free_memory",
     "get_size",
-    "bucket_count",
-    "max_bucket_count",
+    "inspect",
+    "isClosed",
+    "isData",
+    "isOpen",
     "load_factor",
+    "max_bucket_count",
     "max_load_factor",
-    "isData"
+    "propertyIsEnumerable",
+    "toString",
+    "valueOf"
   };
-  set<string> method_set(methods, methods + sizeof(methods) / sizeof(methods[0]));
 
-  return method_set.find(name) != method_set.end();
+  for (const string &method : methods) {
+    methodTrie.insert(method);
+  }
 }
 
 const char *Cell::c_str() {
@@ -302,16 +311,13 @@ NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
   if (property->IsSymbol() || string(*data) == "prototype") {
     return;
   }
-
-  if (string(*src) == "inspect") {
-    v8::Local<v8::FunctionTemplate> tmpl = Nan::New<v8::FunctionTemplate>(inspect);
-    v8::Local<v8::Function> fn = Nan::GetFunction(tmpl).ToLocalChecked();
-    fn->SetName(Nan::New("inspect").ToLocalChecked());
-    info.GetReturnValue().Set(fn);
-    return;
-  }
-
-  if (!property->IsNull() && isMethod(string(*src))) {
+  if (!property->IsNull() && methodTrie.contains(string(*src))) {
+    if (string(*src) == "inspect") {
+      v8::Local<v8::FunctionTemplate> tmpl = Nan::New<v8::FunctionTemplate>(inspect);
+      v8::Local<v8::Function> fn = Nan::GetFunction(tmpl).ToLocalChecked();
+      fn->SetName(Nan::New("inspect").ToLocalChecked());
+      info.GetReturnValue().Set(fn);
+    }
     return;
   }
 
@@ -321,12 +327,13 @@ NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
     return;
   }
 
-  // If the map doesn't have it, let v8 continue the search.
   auto pair = self->property_map->find<char_string, hasher, s_equal_to>
     (*src, hasher(), s_equal_to());
 
+  // If the map doesn't have it, let v8 continue the search.
   if (pair == self->property_map->end())
     return;
+
   Cell *c = &pair->second;
   if (c->type() == STRING_TYPE) {
     info.GetReturnValue().Set(Nan::New<v8::String>(c->c_str()).ToLocalChecked());
@@ -618,6 +625,7 @@ v8::Local<v8::Function> SharedMap::init_methods(v8::Local<v8::FunctionTemplate> 
 }
 
 NAN_MODULE_INIT(SharedMap::Init) {
+  buildMethods();
   // The mmap creator class
   v8::Local<v8::FunctionTemplate> create_tpl = Nan::New<v8::FunctionTemplate>(Create);
   create_tpl->SetClassName(Nan::New("CreateMmap").ToLocalChecked());

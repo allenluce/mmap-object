@@ -17,7 +17,8 @@ const BiggerKeySize = 10000
 
 const methods = ['isClosed', 'isOpen', 'close', 'valueOf', 'toString',
                  'close', 'get_free_memory', 'get_size', 'bucket_count',
-                 'max_bucket_count', 'load_factor', 'max_load_factor']
+                 'max_bucket_count', 'load_factor', 'max_load_factor',
+                 'propertyIsEnumerable']
 
 describe('mmap-object', function () {
   before(function () {

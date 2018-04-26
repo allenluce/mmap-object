@@ -43,10 +43,11 @@
       "cflags_cc": [ "<@(cflags_cc)" ],
       "include_dirs": [ "<@(include_dirs)" ],
       "libraries": [ "<@(libraries)" ],
-      "xcode_settings": {
+        "xcode_settings": {
+        "MACOSX_DEPLOYMENT_TARGET": "10.9",
         "OTHER_CFLAGS": [
           "<@(OTHER_CFLAGS)" ,
-          "-stdlib=libc++"
+            "-stdlib=libc++"
         ],
         "GCC_ENABLE_CPP_EXCEPTIONS": "YES",
         "GCC_ENABLE_CPP_RTTI": "-frtti"

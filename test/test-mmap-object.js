@@ -139,16 +139,27 @@ describe('mmap-object', function () {
 
     it('throws exception when file gets too big', function () {
       const filename = path.join(this.dir, 'bomb_me')
-      const smallobj = new MmapObject.Create(filename, 1, 4, 20)
-      smallobj['key'] = new Array(BigKeySize).join('big')
+      const smallobj = new MmapObject.Create(filename, 40, 20, 40)
+      let i
       expect(function () {
-        smallobj['otherkey'] = new Array(BigKeySize).join('big')
+        for (i = 0; i < 20; i++) {
+          smallobj[`key${i}`] = new Array(BigKeySize).join('big')
+        }
       }).to.throw(/File grew too large./)
+      expect(i).to.be.above(5)
     })
 
     it('allows numbers as property names', function () {
       this.shobj[1] = 'what'
       expect(this.shobj[1]).to.equal('what')
+    })
+
+    it('avoids getting too big when rewriting the same key over and over', function () {
+      const filename = path.join(this.dir, 'bomb_me')
+      const smallobj = new MmapObject.Create(filename, 2, 2, 2)
+      for (let i = 0; i < 200002; i++) {
+        smallobj['key'] = `a chunk of data: ${i}`
+      }
     })
   })
 
@@ -161,7 +172,7 @@ describe('mmap-object', function () {
       const initial = this.obj.get_free_memory()
       this.obj.gfm = new Array(BigKeySize).join('Data')
       const final = this.obj.get_free_memory()
-      expect(initial - final).to.be.above(12432)
+      expect(initial - final).to.be.above(12430)
     })
 
     it('get_size', function () {

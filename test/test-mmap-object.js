@@ -2,11 +2,11 @@
 /* global describe it beforeEach afterEach before after */
 const binary = require('node-pre-gyp')
 const path = require('path')
-const mmap_obj_path = binary.find(path.resolve(path.join(__dirname, '../package.json')))
-const MmapObject = require(mmap_obj_path)
+const mmapObjPath = binary.find(path.resolve(path.join(__dirname, '../package.json')))
+const MmapObject = require(mmapObjPath)
 const expect = require('chai').expect
 const temp = require('temp')
-const child_process = require('child_process')
+const childProcess = require('child_process')
 const fs = require('fs')
 const os = require('os')
 const which = require('which')
@@ -15,10 +15,12 @@ const async = require('async')
 const BigKeySize = 1000
 const BiggerKeySize = 10000
 
-const methods = ['isClosed', 'isOpen', 'close', 'valueOf', 'toString',
-                 'close', 'get_free_memory', 'get_size', 'bucket_count',
-                 'max_bucket_count', 'load_factor', 'max_load_factor',
-                 'propertyIsEnumerable']
+const methods = [
+  'isClosed', 'isOpen', 'close', 'valueOf', 'toString',
+  'close', 'get_free_memory', 'get_size', 'bucket_count',
+  'max_bucket_count', 'load_factor', 'max_load_factor',
+  'propertyIsEnumerable'
+]
 
 describe('mmap-object', function () {
   before(function () {
@@ -237,16 +239,16 @@ describe('mmap-object', function () {
     it('works across copies', function () {
       const newfile = path.join(this.dir, 'copiertest')
       fs.writeFileSync(newfile, fs.readFileSync(this.testfile))
-      const new_reader = new MmapObject.Open(newfile)
-      expect(new_reader.first).to.equal('value for first')
+      const newReader = new MmapObject.Open(newfile)
+      expect(newReader.first).to.equal('value for first')
     })
 
     it('works across processes', function (done) {
       process.env.TESTFILE = this.testfile
-      const child = child_process.fork(which.sync('mocha'), ['./test/util-interprocess.js'])
-      child.on('exit', function (exit_code) {
+      const child = childProcess.fork(which.sync('mocha'), ['./test/util-interprocess.js'])
+      child.on('exit', function (exitCode) {
         expect(child.signalCode).to.be.null
-        expect(exit_code, 'error from util-interprocess.js').to.equal(0)
+        expect(exitCode, 'error from util-interprocess.js').to.equal(0)
         done()
       })
     })
@@ -258,17 +260,17 @@ describe('mmap-object', function () {
       }).to.throw(/.tmp.no_file_at_all does not exist.|.tmp.no_file_at_all: No such file or directory/)
     })
 
-    it("throws exception on a zero-length file", function () {
+    it('throws exception on a zero-length file', function () {
       const newfile = path.join(this.dir, 'zerolength')
-      fs.appendFileSync(newfile, "")
+      fs.appendFileSync(newfile, '')
       expect(function () {
         const reader = new MmapObject.Open(newfile)
       }).to.throw(/zerolength is an empty file./)
     })
 
-    it("throws exception on a corrupt file", function () {
+    it('throws exception on a corrupt file', function () {
       const newfile = path.join(this.dir, 'corrupt')
-      fs.appendFileSync(newfile, "CORRUPTION")
+      fs.appendFileSync(newfile, 'CORRUPTION')
       expect(function () {
         const reader = new MmapObject.Open(newfile)
       }).to.throw(/Can't open file .*corrupt: boost::interprocess_exception::library_error/)
@@ -335,7 +337,7 @@ describe('mmap-object', function () {
 
     it('throws exception on bad file', function () {
       expect(function () {
-        const obj = new MmapObject.Open(path.join(__dirname,'badfile.bin'))
+        const obj = new MmapObject.Open(path.join(__dirname, 'badfile.bin'))
         expect(obj).to.not.exist
       }).to.throw(/File .*badfile.bin appears to be corrupt/)
     })
@@ -345,7 +347,7 @@ describe('mmap-object', function () {
         return this.skip() // Issues with these platforms on Travis
       }
       expect(function () {
-        const obj = new MmapObject.Open(path.join(__dirname,'badfile2.bin'))
+        const obj = new MmapObject.Open(path.join(__dirname, 'badfile2.bin'))
         expect(obj).to.not.exist
       }).to.throw(/File .*badfile2.bin appears to be corrupt/)
     })
@@ -366,10 +368,10 @@ describe('mmap-object', function () {
       this.timeout(30000) // Can take a little longer
       process.env.TESTFILE = this.testfile
       async.times(10, function (n, next) {
-        const child = child_process.fork('./test/util-closer.js')
-        child.on('exit', function (exit_code) {
+        const child = childProcess.fork('./test/util-closer.js')
+        child.on('exit', function (exitCode) {
           expect(child.signalCode).to.be.null
-          expect(exit_code, 'error from util-closer.js').to.equal(0)
+          expect(exitCode, 'error from util-closer.js').to.equal(0)
           next()
         })
       }, done)
@@ -427,25 +429,25 @@ describe('mmap-object', function () {
     })
 
     it('all creators are equal', function () {
-      const writer1_prototype = Object.getPrototypeOf(this.writer1)
-      const writer2_prototype = Object.getPrototypeOf(this.writer2)
-      expect(writer1_prototype).to.equal(writer2_prototype)
-      expect(writer1_prototype).to.equal(writer2_prototype)
-      expect(writer2_prototype).to.equal(writer2_prototype)
+      const writer1Prototype = Object.getPrototypeOf(this.writer1)
+      const writer2Prototype = Object.getPrototypeOf(this.writer2)
+      expect(writer1Prototype).to.equal(writer2Prototype)
+      expect(writer1Prototype).to.equal(writer2Prototype)
+      expect(writer2Prototype).to.equal(writer2Prototype)
     })
 
     it('openers are equal', function () {
-      const reader1_prototype = Object.getPrototypeOf(this.reader1)
-      const reader2_prototype = Object.getPrototypeOf(this.reader2)
-      expect(reader1_prototype).to.equal(reader1_prototype)
-      expect(reader1_prototype).to.equal(reader2_prototype)
-      expect(reader2_prototype).to.equal(reader2_prototype)
+      const reader1Prototype = Object.getPrototypeOf(this.reader1)
+      const reader2Prototype = Object.getPrototypeOf(this.reader2)
+      expect(reader1Prototype).to.equal(reader1Prototype)
+      expect(reader1Prototype).to.equal(reader2Prototype)
+      expect(reader2Prototype).to.equal(reader2Prototype)
     })
 
     it('openers are not creators', function () {
-      const reader_prototype = Object.getPrototypeOf(this.reader1)
-      const writer_prototype = Object.getPrototypeOf(this.writer1)
-      expect(reader_prototype).to.not.equal(writer_prototype)
+      const readerPrototype = Object.getPrototypeOf(this.reader1)
+      const writerPrototype = Object.getPrototypeOf(this.writer1)
+      expect(readerPrototype).to.not.equal(writerPrototype)
     })
   })
 
@@ -454,12 +456,12 @@ describe('mmap-object', function () {
       if (os.platform() === 'darwin') {
         return this.skip()
       }
-      const old_format_file = `${__dirname}/previous-format-${os.platform()}.bin`
-      this.oldformat = new MmapObject.Open(old_format_file)
+      const oldFormatFile = `${__dirname}/previous-format-${os.platform()}.bin`
+      this.oldformat = new MmapObject.Open(oldFormatFile)
     })
 
     after(function () {
-      if (os.platform() == 'darwin') {
+      if (os.platform() === 'darwin') {
         return
       }
       this.oldformat.close()

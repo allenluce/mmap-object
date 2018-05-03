@@ -17,8 +17,8 @@
 #include "aho_corasick.hpp"
 
 #if BOOST_VERSION < 105500
-#pragma message("Found boost version " BOOST_PP_STRINGIZE(BOOST_LIB_VERSION))
-#error mmap-object needs at least version 1_55 to maintain compatibility.
+  #pragma message("Found boost version " BOOST_PP_STRINGIZE(BOOST_LIB_VERSION))
+  #error mmap-object needs at least version 1_55 to maintain compatibility.
 #endif
 
 #define MINIMUM_FILE_SIZE 500 // Minimum necessary to handle an mmap'd unordered_map on all platforms.
@@ -27,10 +27,18 @@
 
 // For Win32 compatibility
 #ifndef S_ISDIR
-#define S_ISDIR(mode)  (((mode) & S_IFMT) == S_IFDIR)
+  #define S_ISDIR(mode)  (((mode) & S_IFMT) == S_IFDIR)
 #endif
 #ifndef S_ISREG
-#define S_ISREG(mode)  (((mode) & S_IFMT) == S_IFREG)
+  #define S_ISREG(mode)  (((mode) & S_IFMT) == S_IFREG)
+#endif
+
+// To handle Node 10's deprecated non-isolate v8::String::Utf8Value version
+#define NODE_10_0_MODULE_VERSION 64
+#if NODE_MODULE_VERSION >= NODE_10_0_MODULE_VERSION
+  #define UTF8VALUE(value) (info.GetIsolate(), value)
+#else
+  #define UTF8VALUE(value) (value)
 #endif
 
 namespace bip=boost::interprocess;
@@ -237,7 +245,7 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
     while(true) {
       try {
         if (value->IsString()) {
-          v8::String::Utf8Value data(value);
+          v8::String::Utf8Value data UTF8VALUE(value);
           data_length += data.length();
           char_allocator allocer(self->map_seg->get_segment_manager());
           c = new Cell(string(*data).c_str(), allocer);
@@ -249,7 +257,7 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
           return;
         }
 
-        v8::String::Utf8Value prop(property);
+        v8::String::Utf8Value prop UTF8VALUE(property);
         data_length += prop.length();
         shared_string *string_key;
         char_allocator allocer(self->map_seg->get_segment_manager());
@@ -306,8 +314,8 @@ NAN_METHOD(SharedMap::inspect) {
 }
 
 NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
-  v8::String::Utf8Value data(info.Data());
-  v8::String::Utf8Value src(property);
+  v8::String::Utf8Value data UTF8VALUE(info.Data());
+  v8::String::Utf8Value src UTF8VALUE(property);
   if (property->IsSymbol() || string(*data) == "prototype") {
     return;
   }
@@ -343,7 +351,7 @@ NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
 }
 
 NAN_PROPERTY_QUERY(SharedMap::PropQuery) {
-  v8::String::Utf8Value src(property);
+  v8::String::Utf8Value src UTF8VALUE(property);
 
   if (isMethod(string(*src))) {
     info.GetReturnValue().Set(Nan::New<v8::Integer>(v8::ReadOnly | v8::DontEnum | v8::DontDelete));
@@ -365,7 +373,7 @@ NAN_PROPERTY_DELETER(SharedMap::PropDeleter) {
     return;
   }
   
-  v8::String::Utf8Value src(property);
+  v8::String::Utf8Value src UTF8VALUE(property);
 
   if (isMethod(string(*src))) {
     info.GetReturnValue().Set(Nan::New<v8::Boolean>(v8::None));
@@ -384,7 +392,7 @@ NAN_PROPERTY_DELETER(SharedMap::PropDeleter) {
     return;
   }
 
-  v8::String::Utf8Value prop(property);
+  v8::String::Utf8Value prop UTF8VALUE(property);
   shared_string *string_key;
   char_allocator allocer(self->map_seg->get_segment_manager());
   string_key = new shared_string(string(*prop).c_str(), allocer);

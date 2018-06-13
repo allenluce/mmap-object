@@ -31,6 +31,14 @@ Open an existing file for reading. Multiple processes can safely open
 this file. Opening is lightning fast and only a single copy remains in
 memory.
 
+## Faster performance with buffers
+
+If you use lengthy data values,
+[buffers](https://nodejs.org/api/buffer.html) can speed things up
+considerably. In rough benchmarking, a 300% speedup was see when
+reading 20k-byte values as buffers instead of strings. For 200k-byte
+values, the speedup was 2000%.
+
 ## Requirements
 
 Binaries are provided for OSX and Linux for various node versions
@@ -45,23 +53,23 @@ compiler (like GCC 4.8 or better) to build the module.
 ## Usage
 
 ```javascript
-// Write a file
 const Shared = require('mmap-object')
-
 const shared_object = new Shared.Create('filename')
 
-shared_object['new_key'] = 'some value'
-shared_object.new_property = 'some other value'
+shared_object['new_key'] = 'a string value'
+shared_object.new_property = Buffer.from('a buffer value, supporting Unicode™')
+shared_object['useless key'] = 0
 
 // Erase a key
-delete shared_object['new_key']
-
+delete shared_object['useless_key']
 shared_object.close()
 
 // Read a file
 const read_only_shared_object = new Shared.Open('filename')
-
 console.log(`My value is ${read_only_shared_object.new_key}`)
+console.log(`My other value is ${read_only_shared_object.new_property}`)
+
+read_only_shared_object.close()
 ```
 
 ## API
@@ -199,8 +207,8 @@ the object will resize as you fill it up. This can be a very
 time-consuming process and can result in fragmentation within the
 shared memory object and a larger final file size.
 
-Object values may be only string or number values. Attempting to set
-a different type value results in an exception.
+Object values may be only string, buffer, or number values. Attempting
+to set a different type value results in an exception.
 
 Symbols are not supported as properties.
 

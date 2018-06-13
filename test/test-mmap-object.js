@@ -346,7 +346,7 @@ describe('mmap-object', function () {
 
     it('throws exception on bad file', function () {
       expect(function () {
-        const obj = new MmapObject.Open(path.join(__dirname, 'badfile.bin'))
+        const obj = new MmapObject.Open(path.join(__dirname, '..', 'testdata', 'badfile.bin'))
         expect(obj).to.not.exist
       }).to.throw(/File .*badfile.bin appears to be corrupt/)
     })
@@ -356,7 +356,7 @@ describe('mmap-object', function () {
         return this.skip() // Issues with these platforms on Travis
       }
       expect(function () {
-        const obj = new MmapObject.Open(path.join(__dirname, 'badfile2.bin'))
+        const obj = new MmapObject.Open(path.join(__dirname, '..', 'testdata', 'badfile2.bin'))
         expect(obj).to.not.exist
       }).to.throw(/File .*badfile2.bin appears to be corrupt/)
     })
@@ -461,17 +461,11 @@ describe('mmap-object', function () {
   })
   describe('Still can read old format', function () {
     before(function () {
-      if (os.platform() === 'darwin') {
-        return this.skip()
-      }
-      const oldFormatFile = `${__dirname}/previous-format-${os.platform()}.bin`
+      const oldFormatFile = path.join(__dirname, '..', 'testdata', `previous-format-${os.platform()}.bin`)
       this.oldformat = new MmapObject.Open(oldFormatFile)
     })
 
     after(function () {
-      if (os.platform() === 'darwin') {
-        return
-      }
       this.oldformat.close()
     })
 

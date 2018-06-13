@@ -62,6 +62,15 @@ describe('mmap-object', function () {
       expect(this.shobj['some other number property']).to.equal(0.2)
     })
 
+    it('sets properties to a buffer', function () {
+      const buf = Buffer.from([0x62, 0x75, 0x66, 0x66, 0x65, 0x72])
+      this.shobj.my_buffer_property = buf
+      expect(this.shobj.my_buffer_property).to.deep.equal(buf)
+      const buf2 = Buffer.from([0x62, 0x0, 0x66, 0x66, 0x65, 0x72])
+      this.shobj.my_buffer_property2 = buf2
+      expect(this.shobj.my_buffer_property2).to.deep.equal(buf2)
+    })
+
     it('can delete properties', function () {
       this.shobj.should_be_deleted = 'please delete me'
       expect(this.shobj.should_be_deleted).to.equal('please delete me')
@@ -450,7 +459,6 @@ describe('mmap-object', function () {
       expect(readerPrototype).to.not.equal(writerPrototype)
     })
   })
-
   describe('Still can read old format', function () {
     before(function () {
       if (os.platform() === 'darwin') {

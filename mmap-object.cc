@@ -57,15 +57,18 @@ typedef bip::basic_string<char, char_traits<char>> char_string;
 #define UNINITIALIZED 0
 #define STRING_TYPE 1
 #define NUMBER_TYPE 2
+#define BUFFER_TYPE 3
 class WrongPropertyType: public exception {};
 class FileTooLarge: public exception {};
 
 class Cell {
 private:
   char cell_type;
+  shared_string::size_type cell_length;
   union values {
     shared_string string_value;
     double number_value;
+    values(const char *value, const shared_string::size_type len, char_allocator allocator): string_value(value, len, allocator) {}
     values(const char *value, char_allocator allocator): string_value(value, allocator) {}
     values(const double value): number_value(value) {}
     values() {}
@@ -75,6 +78,7 @@ private:
   Cell(Cell&&) = default;
   Cell& operator=(Cell&&) & = default;
 public:
+  Cell(const char *value, const shared_string::size_type len, char_allocator allocator) : cell_type(BUFFER_TYPE), cell_length(len), cell_value(value, len, allocator) {}
   Cell(const char *value, char_allocator allocator) : cell_type(STRING_TYPE), cell_value(value, allocator) {}
   Cell(const double value) : cell_type(NUMBER_TYPE), cell_value(value) {}
   Cell(const Cell &cell);
@@ -83,8 +87,8 @@ public:
       cell_value.string_value.~shared_string();
   }
   char type() { return cell_type; }
+  shared_string::size_type length() { return cell_length; }
   const char *c_str();
-  operator string();
   operator double();
 };
 
@@ -199,14 +203,6 @@ void buildMethods() {
 }
 
 const char *Cell::c_str() {
-  if (type() != STRING_TYPE)
-    throw WrongPropertyType();
- return cell_value.string_value.c_str();
-}
-
-Cell::operator string() {
-  if (type() != STRING_TYPE)
-    throw WrongPropertyType();
   return cell_value.string_value.c_str();
 }
 
@@ -218,10 +214,17 @@ Cell::operator double() {
 
 Cell::Cell(const Cell &cell) {
   cell_type = cell.cell_type;
-  if (cell.cell_type == STRING_TYPE) {
-    new (&cell_value.string_value)(shared_string)(cell.cell_value.string_value, cell.cell_value.string_value.get_allocator());
-  } else { // is a number type
+  switch (cell_type) {
+  case STRING_TYPE:
+  case BUFFER_TYPE:
+    new (&cell_value.string_value)(shared_string)(cell.cell_value.string_value);
+    cell_length = cell.cell_length;
+    break;
+  case NUMBER_TYPE:
     cell_value.number_value = cell.cell_value.number_value;
+    break;
+  default:
+    throw WrongPropertyType();
   }
 }
 
@@ -256,6 +259,13 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
         } else if (value->IsNumber()) {
           data_length += sizeof(double);
           c.reset(new Cell(Nan::To<double>(value).FromJust()));
+        } else if (value->IsArrayBufferView()) {
+          v8::Local<v8::Object> buf = value->ToObject();
+          char* bufData = node::Buffer::Data(buf);
+          size_t bufLen = node::Buffer::Length(buf);
+          data_length += bufLen;
+          char_allocator allocer(self->map_seg->get_segment_manager());
+          c.reset(new Cell(bufData, bufLen, allocer));
         } else {
           Nan::ThrowError("Value must be a string or number.");
           return;
@@ -316,6 +326,9 @@ NAN_METHOD(SharedMap::inspect) {
   info.GetReturnValue().Set(v8::None);
 }
 
+// Avoid freeing shared memory
+static void NullFreer(char *, void *) {}
+
 NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
   v8::String::Utf8Value data UTF8VALUE(info.Data());
   v8::String::Utf8Value src UTF8VALUE(property);
@@ -346,10 +359,16 @@ NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
     return;
 
   Cell *c = &pair->second;
-  if (c->type() == STRING_TYPE) {
+  switch (c->type()) {
+  case STRING_TYPE:
     info.GetReturnValue().Set(Nan::New<v8::String>(c->c_str()).ToLocalChecked());
-  } else if (c->type() == NUMBER_TYPE) {
+    break;
+  case BUFFER_TYPE:
+    info.GetReturnValue().Set(Nan::NewBuffer(const_cast<char*>(c->c_str()), c->length(), NullFreer, NULL).ToLocalChecked());
+    break;
+  case NUMBER_TYPE:
     info.GetReturnValue().Set((double)*c);
+    break;
   }
 }
 

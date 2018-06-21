@@ -147,6 +147,25 @@ obj.close(function (err) {
 })
 ```
 
+### Iteration
+
+The [iterable
+protocol](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Iteration_protocols#The_iterable_protocol)
+is supported for efficient iteration over the entire contents of the
+object:
+
+```js
+const Shared = require('mmap-object')
+const obj = new Shared.Open('filename')
+
+for (let [key, value] of obj) {
+    console.log(`${key} => ${value}`)
+}
+```
+
+(This ES6 syntax is supported in Node 6+, for previous versions of
+node a more laborious syntax is necessary.)
+
 ### isData()
 
 When iterating, use `isData()` to tell if a particular key is real

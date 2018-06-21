@@ -140,6 +140,8 @@ private:
   PropertyHash *property_map;
   bool readonly;
   bool closed;
+  PropertyHash::iterator iter;
+  
   void grow(size_t);
   static NAN_METHOD(Create);
   static NAN_METHOD(Open);
@@ -153,7 +155,7 @@ private:
   static NAN_METHOD(max_bucket_count);
   static NAN_METHOD(load_factor);
   static NAN_METHOD(max_load_factor);
-  static NAN_METHOD(inspect);
+  static NAN_METHOD(next);
   static NAN_PROPERTY_SETTER(PropSetter);
   static NAN_PROPERTY_GETTER(PropGetter);
   static NAN_PROPERTY_QUERY(PropQuery);
@@ -185,7 +187,6 @@ void buildMethods() {
     "close",
     "get_free_memory",
     "get_size",
-    "inspect",
     "isClosed",
     "isData",
     "isOpen",
@@ -322,30 +323,74 @@ NAN_INDEX_ENUMERATOR(SharedMap::IndexEnumerator) {
   info.GetReturnValue().Set(Nan::New<v8::Array>(v8::None));
 }
 
-NAN_METHOD(SharedMap::inspect) {
-  info.GetReturnValue().Set(v8::None);
-}
-
 // Avoid freeing shared memory
 static void NullFreer(char *, void *) {}
+
+NAN_METHOD(SharedMap::next) {
+  // Always return an object
+  auto obj = Nan::New<v8::Object>();
+  info.GetReturnValue().Set(obj);
+  
+  auto self = static_cast<SharedMap*>(info.Data().As<v8::External>()->Value());
+
+  // Determine if we're at the end of the iteration
+  if (self->iter == self->property_map->end()) {
+    Nan::Set(obj, Nan::New<v8::String>("done").ToLocalChecked(), Nan::True());
+    return;
+  }
+
+  // Iterate and return an array of [key, value] for this step.
+  auto arr = Nan::New<v8::Array>();
+  arr->Set(0, Nan::New<v8::String>(self->iter->first.c_str()).ToLocalChecked()); // key
+
+  Cell *c = &self->iter->second; // value
+  switch (c->type()) {
+  case STRING_TYPE:
+    arr->Set(1, Nan::New<v8::String>(c->c_str()).ToLocalChecked());
+    break;
+  case BUFFER_TYPE:
+    arr->Set(1, Nan::NewBuffer(const_cast<char*>(c->c_str()), c->length(), NullFreer, NULL).ToLocalChecked());
+    break;
+  case NUMBER_TYPE:
+    arr->Set(1, Nan::New<v8::Number>(*c));
+    break;
+  }
+  
+  // Per iteration protocol, the value property of the returned object
+  // holds the data for this iteration.
+  Nan::Set(obj, Nan::New<v8::String>("value").ToLocalChecked(), arr);
+  self->iter++;
+}
 
 NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
   v8::String::Utf8Value data UTF8VALUE(info.Data());
   v8::String::Utf8Value src UTF8VALUE(property);
-  if (property->IsSymbol() || string(*data) == "prototype") {
-    return;
-  }
-  if (!property->IsNull() && methodTrie.contains(string(*src))) {
-    if (string(*src) == "inspect") {
-      v8::Local<v8::FunctionTemplate> tmpl = Nan::New<v8::FunctionTemplate>(inspect);
-      v8::Local<v8::Function> fn = Nan::GetFunction(tmpl).ToLocalChecked();
-      fn->SetName(Nan::New("inspect").ToLocalChecked());
-      info.GetReturnValue().Set(fn);
-    }
-    return;
-  }
 
+  if (!property->IsNull() && !property->IsSymbol() && methodTrie.contains(string(*src))) {
+    return;
+  }
   auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
+  if (property->IsSymbol()) {
+    // Handle iteration
+    if (Nan::Equals(property, v8::Symbol::GetIterator(info.GetIsolate())).FromJust()) {
+      self->iter = self->property_map->begin(); // Reset the iterator
+      auto iter_template = Nan::New<v8::FunctionTemplate>();
+      Nan::SetCallHandler(iter_template, [](const Nan::FunctionCallbackInfo<v8::Value> &info) {
+          auto next_template = Nan::New<v8::FunctionTemplate>();
+          Nan::SetCallHandler(next_template, next, info.Data());
+          auto obj = Nan::New<v8::Object>();
+          Nan::Set(obj, Nan::New<v8::String>("next").ToLocalChecked(),
+                   next_template->GetFunction());
+          info.GetReturnValue().Set(obj);
+        }, Nan::New<v8::External>(self));
+      info.GetReturnValue().Set(iter_template->GetFunction());
+    }
+    // Otherwise don't return anything on symbol accesses
+    return;
+  }
+  if (string(*data) == "prototype") {
+    return;
+  }
   if (self->closed) {
     Nan::ThrowError("Cannot read from closed object.");
     return;

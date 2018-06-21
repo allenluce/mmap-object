@@ -418,6 +418,20 @@ describe('mmap-object', function () {
       expect(this.reader.isData(this.reader)).to.be.true
       expect(this.reader.isData(Symbol('close'))).to.be.true
     })
+    it('implements the iterator protocol', function () {
+      let count = 0
+      let done
+      const iterator = this.reader[Symbol.iterator]()
+      do {
+        const obj = iterator.next()
+        const key = obj[0]
+        const value = obj[1]
+        expect(this.reader[key]).to.deep.equal(value)
+        count++
+        done = obj.done
+      } while(!done)
+      expect(count).to.equal(7)
+    })
   })
 
   describe('Object comparison', function () {

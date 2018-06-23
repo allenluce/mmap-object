@@ -101,7 +101,7 @@ describe('mmap-object', function () {
     })
 
     it('throws when writing after close', function () {
-      const obj = new MmapObject.Create(path.join(this.dir, 'closetest'))
+      const obj = new MmapObject.Create(path.join(this.dir, 'closetest-write'))
       obj['first'] = 'value'
       expect(obj.isClosed()).to.be.false
       expect(obj.isOpen()).to.be.true
@@ -114,7 +114,7 @@ describe('mmap-object', function () {
     })
 
     it('throws when deleting after close', function () {
-      const obj = new MmapObject.Create(path.join(this.dir, 'closetest'))
+      const obj = new MmapObject.Create(path.join(this.dir, 'closetest-del'))
       obj['first'] = 'value'
       expect(obj.isClosed()).to.be.false
       expect(obj.isOpen()).to.be.true

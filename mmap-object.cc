@@ -189,7 +189,7 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
     unique_ptr<Cell> c;
     while(true) {
       try {
-        data_length += Cell::SetValue(value, self->map_seg, c);
+        data_length += Cell::SetValue(value, self->map_seg, c, info);
         v8::String::Utf8Value prop UTF8VALUE(property);
         data_length += prop.length();
         char_allocator allocer(self->map_seg->get_segment_manager());

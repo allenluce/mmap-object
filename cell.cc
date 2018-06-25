@@ -53,7 +53,8 @@ v8::Local<v8::Value> Cell::GetValue() {
 // Create a new cell to wrap the given value with, reset the given
 // unique_ptr to that cell. Return the length of the data stored for
 // the caller's accounting.
-size_t Cell::SetValue(v8::Local<v8::Value> value, bip::managed_mapped_file *segment, unique_ptr<Cell> &c) {
+size_t Cell::SetValue(v8::Local<v8::Value> value, bip::managed_mapped_file *segment,
+                      unique_ptr<Cell> &c, const Nan::PropertyCallbackInfo<v8::Value>& info) {
   size_t length;
   if (value->IsString()) {
     v8::String::Utf8Value data UTF8VALUE(value);

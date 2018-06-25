@@ -7,14 +7,14 @@
     #endif
   #endif
 #endif
-#include <stdbool.h>
 #include <boost/interprocess/managed_mapped_file.hpp>
-#include <boost/interprocess/managed_shared_memory.hpp>
 #include <boost/interprocess/containers/string.hpp>
 #include <boost/unordered_map.hpp>
 #include <boost/version.hpp>
-#include <nan.h>
+#include "cell.hpp"
 #include "aho_corasick.hpp"
+
+#include "common.hpp"
 
 #if BOOST_VERSION < 105500
   #pragma message("Found boost version " BOOST_PP_STRINGIZE(BOOST_LIB_VERSION))
@@ -33,64 +33,10 @@
   #define S_ISREG(mode)  (((mode) & S_IFMT) == S_IFREG)
 #endif
 
-// To handle Node 10's deprecated non-isolate v8::String::Utf8Value version
-#define NODE_10_0_MODULE_VERSION 64
-#if NODE_MODULE_VERSION >= NODE_10_0_MODULE_VERSION
-  #define UTF8VALUE(value) (info.GetIsolate(), value)
-#else
-  #define UTF8VALUE(value) (value)
-#endif
-
 namespace bip=boost::interprocess;
 using namespace std;
 
-typedef bip::managed_shared_memory::segment_manager segment_manager_t;
-
-template <typename StorageType> using SharedAllocator =
-  bip::allocator<StorageType, segment_manager_t>;
-
-typedef SharedAllocator<char> char_allocator;
-
-typedef bip::basic_string<char, char_traits<char>, char_allocator> shared_string;
 typedef bip::basic_string<char, char_traits<char>> char_string;
-
-#define UNINITIALIZED 0
-#define STRING_TYPE 1
-#define NUMBER_TYPE 2
-#define BUFFER_TYPE 3
-class WrongPropertyType: public exception {};
-class FileTooLarge: public exception {};
-
-class Cell {
-private:
-  char cell_type;
-  shared_string::size_type cell_length;
-  union values {
-    shared_string string_value;
-    double number_value;
-    values(const char *value, const shared_string::size_type len, char_allocator allocator): string_value(value, len, allocator) {}
-    values(const char *value, char_allocator allocator): string_value(value, allocator) {}
-    values(const double value): number_value(value) {}
-    values() {}
-    ~values() {}
-  } cell_value;
-  Cell& operator =(const Cell&) = default;
-  Cell(Cell&&) = default;
-  Cell& operator=(Cell&&) & = default;
-public:
-  Cell(const char *value, const shared_string::size_type len, char_allocator allocator) : cell_type(BUFFER_TYPE), cell_length(len), cell_value(value, len, allocator) {}
-  Cell(const char *value, char_allocator allocator) : cell_type(STRING_TYPE), cell_value(value, allocator) {}
-  Cell(const double value) : cell_type(NUMBER_TYPE), cell_value(value) {}
-  Cell(const Cell &cell);
-  ~Cell() {
-    if (cell_type == STRING_TYPE)
-      cell_value.string_value.~shared_string();
-  }
-  char type() { return cell_type; }
-  shared_string::size_type length() { return cell_length; }
-  const char *c_str();
-  operator double();
-};
 
 typedef shared_string KeyType;
 typedef Cell ValueType;
@@ -203,32 +149,6 @@ void buildMethods() {
   }
 }
 
-const char *Cell::c_str() {
-  return cell_value.string_value.c_str();
-}
-
-Cell::operator double() {
-  if (type() != NUMBER_TYPE)
-    throw WrongPropertyType();
-  return cell_value.number_value;
-}
-
-Cell::Cell(const Cell &cell) {
-  cell_type = cell.cell_type;
-  switch (cell_type) {
-  case STRING_TYPE:
-  case BUFFER_TYPE:
-    new (&cell_value.string_value)(shared_string)(cell.cell_value.string_value);
-    cell_length = cell.cell_length;
-    break;
-  case NUMBER_TYPE:
-    cell_value.number_value = cell.cell_value.number_value;
-    break;
-  default:
-    throw WrongPropertyType();
-  }
-}
-
 NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
   auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
   if (self->readonly) {
@@ -252,26 +172,7 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
     unique_ptr<Cell> c;
     while(true) {
       try {
-        if (value->IsString()) {
-          v8::String::Utf8Value data UTF8VALUE(value);
-          data_length += data.length();
-          char_allocator allocer(self->map_seg->get_segment_manager());
-          c.reset(new Cell(string(*data).c_str(), allocer));
-        } else if (value->IsNumber()) {
-          data_length += sizeof(double);
-          c.reset(new Cell(Nan::To<double>(value).FromJust()));
-        } else if (value->IsArrayBufferView()) {
-          v8::Local<v8::Object> buf = value->ToObject();
-          char* bufData = node::Buffer::Data(buf);
-          size_t bufLen = node::Buffer::Length(buf);
-          data_length += bufLen;
-          char_allocator allocer(self->map_seg->get_segment_manager());
-          c.reset(new Cell(bufData, bufLen, allocer));
-        } else {
-          Nan::ThrowError("Value must be a string or number.");
-          return;
-        }
-
+        data_length += Cell::SetValue(value, self->map_seg, c);
         v8::String::Utf8Value prop UTF8VALUE(property);
         data_length += prop.length();
         char_allocator allocer(self->map_seg->get_segment_manager());
@@ -323,9 +224,6 @@ NAN_INDEX_ENUMERATOR(SharedMap::IndexEnumerator) {
   info.GetReturnValue().Set(Nan::New<v8::Array>(v8::None));
 }
 
-// Avoid freeing shared memory
-static void NullFreer(char *, void *) {}
-
 NAN_METHOD(SharedMap::next) {
   // Always return an object
   auto obj = Nan::New<v8::Object>();
@@ -344,17 +242,7 @@ NAN_METHOD(SharedMap::next) {
   arr->Set(0, Nan::New<v8::String>(self->iter->first.c_str()).ToLocalChecked()); // key
 
   Cell *c = &self->iter->second; // value
-  switch (c->type()) {
-  case STRING_TYPE:
-    arr->Set(1, Nan::New<v8::String>(c->c_str()).ToLocalChecked());
-    break;
-  case BUFFER_TYPE:
-    arr->Set(1, Nan::NewBuffer(const_cast<char*>(c->c_str()), c->length(), NullFreer, NULL).ToLocalChecked());
-    break;
-  case NUMBER_TYPE:
-    arr->Set(1, Nan::New<v8::Number>(*c));
-    break;
-  }
+  arr->Set(1, c->GetValue());
   
   // Per iteration protocol, the value property of the returned object
   // holds the data for this iteration.
@@ -404,17 +292,7 @@ NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
     return;
 
   Cell *c = &pair->second;
-  switch (c->type()) {
-  case STRING_TYPE:
-    info.GetReturnValue().Set(Nan::New<v8::String>(c->c_str()).ToLocalChecked());
-    break;
-  case BUFFER_TYPE:
-    info.GetReturnValue().Set(Nan::NewBuffer(const_cast<char*>(c->c_str()), c->length(), NullFreer, NULL).ToLocalChecked());
-    break;
-  case NUMBER_TYPE:
-    info.GetReturnValue().Set((double)*c);
-    break;
-  }
+  info.GetReturnValue().Set(c->GetValue());
 }
 
 NAN_PROPERTY_QUERY(SharedMap::PropQuery) {

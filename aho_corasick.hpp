@@ -24,6 +24,12 @@
 // 440 lines were removed. It's not full Aho Corasick but only detects
 // whether a string is in a set of strings.
 
+#include <queue>
+#include <memory>
+#include <string>
+#include <set>
+#include <map>
+
 namespace aho_corasick {
 	class state {
 	public:

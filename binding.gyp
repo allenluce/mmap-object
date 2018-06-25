@@ -40,7 +40,7 @@
   "targets": [
     {
       "target_name": "<(module_name)",
-      "sources": [ "mmap-object.cc" ],
+      "sources": [ "mmap-object.cc", "cell.cc" ],
       "cflags_cc": [ "<@(cflags_cc)" ],
       "include_dirs": [ "<@(include_dirs)" ],
       "libraries": [ "<@(libraries)" ],

@@ -24,7 +24,6 @@ typedef bip::basic_string<char, char_traits<char>, char_allocator> shared_string
 class Cell {
 private:
   char cell_type;
-  shared_string::size_type cell_length;
   union values {
     shared_string string_value;
     double number_value;
@@ -38,7 +37,7 @@ private:
   Cell(Cell&&) = default;
   Cell& operator=(Cell&&) & = default;
 public:
-  Cell(const char *value, const shared_string::size_type len, char_allocator allocator) : cell_type(BUFFER_TYPE), cell_length(len), cell_value(value, len, allocator) {}
+  Cell(const char *value, const shared_string::size_type len, char_allocator allocator) : cell_type(BUFFER_TYPE), cell_value(value, len, allocator) {}
   Cell(const char *value, char_allocator allocator) : cell_type(STRING_TYPE), cell_value(value, allocator) {}
   Cell(const double value) : cell_type(NUMBER_TYPE), cell_value(value) {}
   Cell(const Cell &cell);
@@ -47,7 +46,7 @@ public:
       cell_value.string_value.~shared_string();
   }
   char type() { return cell_type; }
-  shared_string::size_type length() { return cell_length; }
+  shared_string::size_type length() { return cell_value.string_value.length(); }
   const char *c_str();
   operator double();
   v8::Local<v8::Value> GetValue(); 

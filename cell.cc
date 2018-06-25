@@ -21,7 +21,6 @@ Cell::Cell(const Cell &cell) {
   case STRING_TYPE:
   case BUFFER_TYPE:
     new (&cell_value.string_value)(shared_string)(cell.cell_value.string_value);
-    cell_length = cell.cell_length;
     break;
   case NUMBER_TYPE:
     cell_value.number_value = cell.cell_value.number_value;

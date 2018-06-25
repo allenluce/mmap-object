@@ -179,19 +179,19 @@ describe('mmap-object', function () {
       this.obj = new MmapObject.Create(path.join(this.dir, 'free_memory_file'))
     })
 
-    it('get_free_memory', function () {
+    it('has get_free_memory', function () {
       const initial = this.obj.get_free_memory()
       this.obj.gfm = new Array(BigKeySize).join('Data')
       const final = this.obj.get_free_memory()
       expect(initial - final).to.be.above(12430)
     })
 
-    it('get_size', function () {
+    it('has get_size', function () {
       const final = this.obj.get_size()
       expect(final).to.equal(5242880)
     })
 
-    it('bucket_count', function () {
+    it('has bucket_count', function () {
       this.obj = new MmapObject.Create(path.join(this.dir, 'bucket_counter'), 5, 4)
       expect(this.obj.bucket_count()).to.equal(4)
       this.obj.one = 'value'
@@ -203,19 +203,23 @@ describe('mmap-object', function () {
       expect(this.obj.bucket_count()).to.equal(8)
     })
 
-    it('max_bucket_count', function () {
+    it('has max_bucket_count', function () {
       const final = this.obj.max_bucket_count()
       expect(final).to.equal(512)
     })
 
-    it('load_factor', function () {
+    it('has load_factor', function () {
       const final = this.obj.load_factor()
       expect(final).to.equal(0.625)
     })
 
-    it('max_load_factor', function () {
+    it('has max_load_factor', function () {
       const final = this.obj.max_load_factor()
       expect(final).to.equal(1.0)
+    })
+    it('has fileFormatVersion', function () {
+      const version = this.obj.fileFormatVersion();
+      expect(version).to.equal(1);
     })
   })
 

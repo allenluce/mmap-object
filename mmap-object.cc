@@ -38,6 +38,20 @@ using namespace std;
 
 typedef bip::basic_string<char, char_traits<char>> char_string;
 
+// This changes whenever fields are added/changed in Cell
+#define FILEVERSION 1
+// Also allow version 0 for now. Revisit once FILEVERSION goes to 2.
+#define ALSOOK 0 
+
+#define CHECK_VERSION(obj)                                              \
+  if (obj->version != FILEVERSION && obj->version != ALSOOK) {        \
+    ostringstream error_stream;                                         \
+    error_stream << "File " << *filename << " is format version " << obj->version; \
+    error_stream << " (version " << FILEVERSION << " is expected)";     \
+    Nan::ThrowError(error_stream.str().c_str());                        \
+    return;                                                             \
+  }
+
 typedef shared_string KeyType;
 typedef Cell ValueType;
 
@@ -83,6 +97,7 @@ private:
   size_t file_size;
   size_t max_file_size;
   bip::managed_mapped_file *map_seg;
+  uint32_t version;
   PropertyHash *property_map;
   bool readonly;
   bool closed;
@@ -101,6 +116,7 @@ private:
   static NAN_METHOD(max_bucket_count);
   static NAN_METHOD(load_factor);
   static NAN_METHOD(max_load_factor);
+  static NAN_METHOD(fileFormatVersion);
   static NAN_METHOD(next);
   static NAN_PROPERTY_SETTER(PropSetter);
   static NAN_PROPERTY_GETTER(PropGetter);
@@ -141,6 +157,7 @@ void buildMethods() {
     "max_load_factor",
     "propertyIsEnumerable",
     "toString",
+    "fileFormatVersion",
     "valueOf"
   };
 
@@ -372,6 +389,11 @@ INFO_METHOD(max_bucket_count, uint32_t, property_map)
 INFO_METHOD(load_factor, float, property_map)
 INFO_METHOD(max_load_factor, float, property_map)
 
+NAN_METHOD(SharedMap::fileFormatVersion) {
+  auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
+  info.GetReturnValue().Set((uint32_t)self->version);
+}
+
 NAN_METHOD(SharedMap::Create) {
   if (!info.IsConstructCall()) {
     Nan::ThrowError("Create must be called as a constructor.");
@@ -405,6 +427,13 @@ NAN_METHOD(SharedMap::Create) {
 
   try {
     d->map_seg = new bip::managed_mapped_file(bip::open_or_create, string(*filename).c_str(), file_size);
+    auto vers = d->map_seg->find_or_construct<uint32_t>("version")(FILEVERSION);
+    if (vers == NULL ) {
+      d->version = 0;
+    } else {
+      d->version = *vers;
+    }
+    CHECK_VERSION(d);
     d->property_map = d->map_seg->find_or_construct<PropertyHash>("properties")
       (initial_bucket_count, hasher(), s_equal_to(), d->map_seg->get_segment_manager());
     d->closed = false;
@@ -451,6 +480,13 @@ NAN_METHOD(SharedMap::Open) {
       Nan::ThrowError(error_stream.str().c_str());
       return;
     }
+    auto find_version = d->map_seg->find<uint32_t>("version");
+    if (find_version.second == 0) {
+      d->version = 0; // No version but should be compatible with V1.
+    } else {
+      d->version = *find_version.first;
+    }
+    CHECK_VERSION(d);
     auto find_map = d->map_seg->find<PropertyHash>("properties");
     d->property_map = find_map.first;
     if (d->property_map == NULL) {
@@ -561,6 +597,7 @@ v8::Local<v8::Function> SharedMap::init_methods(v8::Local<v8::FunctionTemplate> 
   Nan::SetPrototypeMethod(f_tpl, "max_bucket_count", max_bucket_count);
   Nan::SetPrototypeMethod(f_tpl, "load_factor", load_factor);
   Nan::SetPrototypeMethod(f_tpl, "max_load_factor", max_load_factor);
+  Nan::SetPrototypeMethod(f_tpl, "fileFormatVersion", fileFormatVersion);
 
   auto proto = f_tpl->PrototypeTemplate();
   Nan::SetNamedPropertyHandler(proto, PropGetter, PropSetter, PropQuery, PropDeleter, PropEnumerator,

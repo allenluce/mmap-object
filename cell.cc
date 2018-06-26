@@ -44,7 +44,7 @@ v8::Local<v8::Value> Cell::GetValue() {
     break;
   default:
     ostringstream error_stream;
-    error_stream << "Unknown cell data type " << type();
+    error_stream << "Unknown cell data type " << dec << (int) type();
     Nan::ThrowError(error_stream.str().c_str());
   }
   return v;

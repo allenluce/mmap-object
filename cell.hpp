@@ -42,7 +42,7 @@ public:
   Cell(const double value) : cell_type(NUMBER_TYPE), cell_value(value) {}
   Cell(const Cell &cell);
   ~Cell() {
-    if (cell_type == STRING_TYPE)
+    if (cell_type == STRING_TYPE || cell_type == BUFFER_TYPE)
       cell_value.string_value.~shared_string();
   }
   char type() { return cell_type; }

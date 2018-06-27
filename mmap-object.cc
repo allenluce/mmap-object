@@ -246,7 +246,7 @@ NAN_METHOD(SharedMap::next) {
   auto obj = Nan::New<v8::Object>();
   info.GetReturnValue().Set(obj);
   
-  auto self = static_cast<SharedMap*>(info.Data().As<v8::External>()->Value());
+  auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.Data().As<v8::Object>());
 
   // Determine if we're at the end of the iteration
   if (self->iter == self->property_map->end()) {
@@ -287,7 +287,7 @@ NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
           Nan::Set(obj, Nan::New<v8::String>("next").ToLocalChecked(),
                    next_template->GetFunction());
           info.GetReturnValue().Set(obj);
-        }, Nan::New<v8::External>(self));
+        }, info.This());
       info.GetReturnValue().Set(iter_template->GetFunction());
     }
     // Otherwise don't return anything on symbol accesses

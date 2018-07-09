@@ -135,9 +135,9 @@ __Arguments__
   write.
 * `map_address` - macOS only, *Optional* If you open more than one
   file, you have to give each file a non-default map_address. The
-  default address is 0x700000000000. Typically, using a sequence of
-  addresses starting with 0x700000100000, 0x700000200000,
-  0x700000300000, etc. should work fine. Note that the same file among
+  default address is 0x400000000000. Typically, using a sequence of
+  addresses starting with 0x400000100000, 0x400000200000,
+  0x400000300000, etc. should work fine. Note that the same file among
   multiple processes must have the same map_address in order to work.
 
 __Example__

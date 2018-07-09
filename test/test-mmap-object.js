@@ -418,7 +418,7 @@ describe('mmap-object', function () {
         return this.skip() // Issues with these platforms on Travis
       }
       expect(function () {
-          const obj = new MMO(path.join(__dirname, '..', 'testdata', 'badfile2.bin'))
+        const obj = new MMO(path.join(__dirname, '..', 'testdata', 'badfile2.bin'))
         expect(obj).to.not.exist
       }).to.throw(/File .*badfile2.bin appears to be corrupt \(1\)./)
     })
@@ -431,10 +431,14 @@ describe('mmap-object', function () {
     })
 
     it('can close asynchronously', function (done) {
-      MMO(this.testfile).control.close(done)
+      const file = MMO(this.testfile)
+      file.control.close(done)
     })
 
     it('can open and close rapidly in a subprocess', function (done) {
+      if (os.platform() === 'darwin') {
+        return this.skip() // macOS doesn't do well with this one
+      }
       this.timeout(30000) // Can take a little longer
       process.env.TESTFILE = this.testfile
       async.times(10, function (n, next) {

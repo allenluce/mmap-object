@@ -124,6 +124,7 @@ public:
   SharedMap() : readonly(false), writeonly(false), closed(false), inGlobalLock(false) {}
   virtual ~SharedMap();
   bool reify_mutexes(uint64_t base_address);
+  bool allocate_mutex_memory(uint64_t base_address, string mutex_name, bool create_only);
   static NAN_MODULE_INIT(Init) {
     auto tpl = Nan::New<v8::FunctionTemplate>();
     auto inst = tpl->InstanceTemplate();
@@ -591,6 +592,31 @@ NAN_METHOD(SharedMapControl::remove_shared_mutex) {
 
 #define DEFAULT_BASE 0x400000000000
 
+bool SharedMap::allocate_mutex_memory(uint64_t base_address, string mutex_name, bool create_only) {
+  bip::shared_memory_object shm;
+  if (create_only) {
+    shm = bip::shared_memory_object(bip::create_only, mutex_name.c_str(), bip::read_write);
+  } else {
+    shm = bip::shared_memory_object(bip::open_only, mutex_name.c_str(), bip::read_write);
+  }
+  
+  shm.truncate(sizeof(Mutexes));
+#ifdef __APPLE__
+  try {
+    mutex_region = bip::mapped_region(shm, bip::read_write, 0, sizeof(Mutexes), (void*)base_address);
+  } catch(bip::interprocess_exception &ex){
+    ostringstream error_stream;
+    error_stream << "mmap failure: " << ex.what();
+    error_stream << " -- You may have to supply the base_address value to the mmap_object call";
+    Nan::ThrowError(error_stream.str().c_str());
+    return false;
+  }
+#else
+  mutex_region = bip::mapped_region(shm, bip::read_write);
+#endif
+  return true;
+}
+
 bool SharedMap::reify_mutexes(uint64_t base_address) {
   string mutex_name(file_name);
   replace(mutex_name.begin(), mutex_name.end(), '/', '-');
@@ -600,39 +626,11 @@ bool SharedMap::reify_mutexes(uint64_t base_address) {
     base_address = DEFAULT_BASE;
   }
   try {
-    shm = bip::shared_memory_object(bip::open_only, mutex_name.c_str(), bip::read_write);
-    shm.truncate(sizeof(Mutexes));
-#ifdef __APPLE__
-    try {
-      mutex_region = bip::mapped_region(shm, bip::read_write, 0, sizeof(Mutexes), (void*)base_address);
-    } catch(bip::interprocess_exception &ex){
-      ostringstream error_stream;
-      error_stream << "mmap failure: " << ex.what();
-      error_stream << " -- You may have to supply the base_address value to the mmap_object call";
-      Nan::ThrowError(error_stream.str().c_str());
-      return false;
-    }
-#else
-    mutex_region = bip::mapped_region(shm, bip::read_write);
-#endif
+    if (!allocate_mutex_memory(base_address, mutex_name, false)) return false;
   } catch(bip::interprocess_exception &ex){
     if (ex.get_error_code() == 7) { // Need to create the region
       bip::shared_memory_object::remove(mutex_name.c_str());
-      shm = bip::shared_memory_object(bip::create_only, mutex_name.c_str(), bip::read_write);
-      shm.truncate(sizeof(Mutexes));
-#ifdef __APPLE__
-      try {
-        mutex_region = bip::mapped_region(shm, bip::read_write, 0, sizeof(Mutexes), (void*)base_address);
-      } catch(bip::interprocess_exception &ex){
-        ostringstream error_stream;
-        error_stream << "mmap failure: " << ex.what();
-        error_stream << " -- You may have to supply the base_address value to the mmap_object call";
-        Nan::ThrowError(error_stream.str().c_str());
-        return false;
-      }
-#else
-      mutex_region = bip::mapped_region(shm, bip::read_write);
-#endif
+      if (!allocate_mutex_memory(base_address, mutex_name, true)) return false;
       new (mutex_region.get_address()) Mutexes;
     } else {
       ostringstream error_stream;
@@ -655,8 +653,9 @@ bool SharedMap::reify_mutexes(uint64_t base_address) {
     if (lock == 0) { // Didn't grab. May be messed up.
       new (mutex_region.get_address()) Mutexes;
       LOCKINFO("RW 3 MESSED UP");
+    } else {
+      LOCKINFO("RW 3 OBTAINED");
     }
-    LOCKINFO("RW 3 OBTAINED");
   } catch (bip::lock_exception &ex) {
     if (ex.get_error_code() == 15) { // Need to init the lock area
       new (mutex_region.get_address()) Mutexes;
@@ -711,7 +710,7 @@ NAN_METHOD(SharedMapControl::Open) {
   d->writeonly = string(*mode) == "wo";
   if (!d->reify_mutexes(map_address)) { // Get these set up before proceeding.
     return; // Reify failed, exception should follow.
-  } 
+  }
   d->max_file_size = max_file_size;
   d->initial_bucket_count = initial_bucket_count;
   struct stat buf;
@@ -760,7 +759,7 @@ NAN_METHOD(SharedMapControl::Open) {
         ostringstream error_stream;
         error_stream << "File " << *filename << " appears to be corrupt (1).";
         Nan::ThrowError(error_stream.str().c_str());
-        return;
+        goto ABORT;
       }
       d->version = FILEVERSION;
       auto vers = d->map_seg->find_or_construct<uint32_t>("version")(FILEVERSION);

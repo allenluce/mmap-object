@@ -54,7 +54,7 @@ v8::Local<v8::Value> Cell::GetValue() {
 
 // Estimate length of the data that will be stored in a SetValue() call.
 // This to give a working estimate for file growing.
-size_t Cell::ValueLength(v8::Local<v8::Value> value) {
+size_t Cell::ValueLength(v8::Local<v8::Value> value, const Nan::PropertyCallbackInfo<v8::Value>& info) {
   size_t length;
   if (value->IsString()) {
     v8::String::Utf8Value data UTF8VALUE(value);

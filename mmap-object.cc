@@ -292,8 +292,8 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
     return;
   }
   
-  size_t data_length = sizeof(Cell) + Cell::ValueLength(value);
-  v8::String::Utf8Value prop(property);
+  size_t data_length = sizeof(Cell) + Cell::ValueLength(value, info);
+  v8::String::Utf8Value prop UTF8VALUE(property);
 
   bip::scoped_lock<upgradable_mutex_type> lock;
   bip::sharable_lock<upgradable_mutex_type> glock;

@@ -9,12 +9,5 @@ addons:
   apt:
     sources: [ boost-latest,  ubuntu-toolchain-r-test ]
     packages: [ g++-4.9, libboost1.55-all-dev ]
-before_install:
-  - |
-    if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then
-      brew update
-      brew install boost155
-    fi
-    export PATH=./node_modules/.bin/:$PATH
 install:
   - npm install --build-from-source

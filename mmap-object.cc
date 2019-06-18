@@ -1,9 +1,11 @@
-#if defined(__linux__)
-  #include <features.h>
-  #if defined(__GLIBC_PREREQ)
-    #if __GLIBC_PREREQ(2, 13)
-      __asm__(".symver clock_gettime,clock_gettime@GLIBC_2.2.5");
-      __asm__(".symver memcpy,memcpy@GLIBC_2.2.5");
+#ifndef __ARM_ARCH
+  #ifdef __linux__
+    #include <features.h>
+    #ifdef __GLIBC_PREREQ
+      #if __GLIBC_PREREQ(2, 13)
+        __asm__(".symver clock_gettime,clock_gettime@GLIBC_2.2.5");
+        __asm__(".symver memcpy,memcpy@GLIBC_2.2.5");
+      #endif
     #endif
   #endif
 #endif
@@ -41,7 +43,7 @@ typedef bip::basic_string<char, char_traits<char>> char_string;
 // This changes whenever fields are added/changed in Cell
 #define FILEVERSION 1
 // Also allow version 0 for now. Revisit once FILEVERSION goes to 2.
-#define ALSOOK 0 
+#define ALSOOK 0
 
 #define CHECK_VERSION(obj)                                              \
   if (obj->version != FILEVERSION && obj->version != ALSOOK) {        \
@@ -102,7 +104,7 @@ private:
   bool readonly;
   bool closed;
   PropertyHash::iterator iter;
-  
+
   void grow(size_t);
   static NAN_METHOD(Create);
   static NAN_METHOD(Open);
@@ -245,7 +247,7 @@ NAN_METHOD(SharedMap::next) {
   // Always return an object
   auto obj = Nan::New<v8::Object>();
   info.GetReturnValue().Set(obj);
-  
+
   auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.Data().As<v8::Object>());
 
   // Determine if we're at the end of the iteration
@@ -260,7 +262,7 @@ NAN_METHOD(SharedMap::next) {
 
   Cell *c = &self->iter->second; // value
   arr->Set(1, c->GetValue());
-  
+
   // Per iteration protocol, the value property of the returned object
   // holds the data for this iteration.
   Nan::Set(obj, Nan::New<v8::String>("value").ToLocalChecked(), arr);
@@ -325,7 +327,7 @@ NAN_PROPERTY_QUERY(SharedMap::PropQuery) {
     info.GetReturnValue().Set(Nan::New<v8::Integer>(v8::ReadOnly | v8::DontDelete));
     return;
   }
-    
+
   info.GetReturnValue().Set(Nan::New<v8::Integer>(v8::None));
 }
 
@@ -334,14 +336,14 @@ NAN_PROPERTY_DELETER(SharedMap::PropDeleter) {
     Nan::ThrowError("Symbol properties are not supported for delete.");
     return;
   }
-  
+
   v8::String::Utf8Value src UTF8VALUE(property);
 
   if (isMethod(string(*src))) {
     info.GetReturnValue().Set(Nan::New<v8::Boolean>(v8::None));
     return;
   }
-  
+
   auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
 
   if (self->readonly) {
@@ -529,7 +531,7 @@ struct CloseWorker : public Nan::AsyncWorker {
   virtual void Execute() { // May run in a separate thread
     if (map->closed) {
       SetErrorMessage("Attempted to close a closed object.");
-      return;                                
+      return;
     }
     bip::managed_mapped_file::shrink_to_fit(map->file_name.c_str());
     map->map_seg->flush();

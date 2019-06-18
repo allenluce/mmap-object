@@ -479,7 +479,8 @@ describe('mmap-object', function () {
   })
   describe('Still can read old format', function () {
     before(function () {
-      const oldFormatFile = path.join(__dirname, '..', 'testdata', `previous-format-${os.platform()}.bin`)
+      const oldFormatFile = path.join(__dirname, '..', 'testdata',
+        `previous-format-${os.platform()}-${os.arch()}.bin`)
       this.oldformat = new MmapObject.Open(oldFormatFile)
     })
 

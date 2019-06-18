@@ -9,8 +9,6 @@
     #endif
   #endif
 #endif
-#include <boost/interprocess/managed_mapped_file.hpp>
-#include <boost/interprocess/containers/string.hpp>
 #include <boost/unordered_map.hpp>
 #include <boost/version.hpp>
 #include "cell.hpp"
@@ -258,10 +256,11 @@ NAN_METHOD(SharedMap::next) {
 
   // Iterate and return an array of [key, value] for this step.
   auto arr = Nan::New<v8::Array>();
-  arr->Set(0, Nan::New<v8::String>(self->iter->first.c_str()).ToLocalChecked()); // key
+
+  Nan::Set(arr, 0, Nan::New<v8::String>(self->iter->first.c_str()).ToLocalChecked()); // key
 
   Cell *c = &self->iter->second; // value
-  arr->Set(1, c->GetValue());
+  Nan::Set(arr, 1, c->GetValue());
 
   // Per iteration protocol, the value property of the returned object
   // holds the data for this iteration.
@@ -287,10 +286,10 @@ NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
           Nan::SetCallHandler(next_template, next, info.Data());
           auto obj = Nan::New<v8::Object>();
           Nan::Set(obj, Nan::New<v8::String>("next").ToLocalChecked(),
-                   next_template->GetFunction());
+                   Nan::GetFunction(next_template).ToLocalChecked());
           info.GetReturnValue().Set(obj);
         }, info.This());
-      info.GetReturnValue().Set(iter_template->GetFunction());
+      info.GetReturnValue().Set(Nan::GetFunction(iter_template).ToLocalChecked());
     }
     // Otherwise don't return anything on symbol accesses
     return;
@@ -374,7 +373,7 @@ NAN_PROPERTY_ENUMERATOR(SharedMap::PropEnumerator) {
 
   int i = 0;
   for (auto it = self->property_map->begin(); it != self->property_map->end(); ++it) {
-	  arr->Set(i++, Nan::New<v8::String>(it->first.c_str()).ToLocalChecked());
+    Nan::Set(arr, i++, Nan::New<v8::String>(it->first.c_str()).ToLocalChecked());
   }
   info.GetReturnValue().Set(arr);
 }
@@ -402,11 +401,11 @@ NAN_METHOD(SharedMap::Create) {
     return;
   }
 
-  Nan::Utf8String filename(info[0]->ToString());
-  size_t file_size = (int)info[1]->Int32Value();
+  Nan::Utf8String filename(Nan::To<v8::String>(info[0]).ToLocalChecked());
+  size_t file_size = (int)Nan::To<int32_t>(info[1]).FromJust();
   file_size *= 1024;
-  size_t initial_bucket_count = (int)info[2]->Int32Value();
-  size_t max_file_size = (int)info[3]->Int32Value();
+  size_t initial_bucket_count = (int)Nan::To<int32_t>(info[2]).FromJust();
+  size_t max_file_size = (int)Nan::To<int32_t>(info[3]).FromJust();
   max_file_size *= 1024;
 
   if (file_size == 0) {
@@ -455,7 +454,7 @@ NAN_METHOD(SharedMap::Open) {
     return;
   }
 
-  Nan::Utf8String filename(info[0]->ToString());
+  Nan::Utf8String filename(Nan::To<v8::String>(info[0]).ToLocalChecked());
 
   struct stat buf;
   int s = stat(*filename, &buf);
@@ -574,7 +573,7 @@ NAN_METHOD(SharedMap::isOpen) {
 NAN_METHOD(SharedMap::isData) {
   auto value = info[0];
   if (value->IsFunction()) {
-    bool success = Nan::GetRealNamedProperty(value->ToObject(),
+    bool success = Nan::GetRealNamedProperty(Nan::To<v8::Object>(info[0]).ToLocalChecked(),
                                              Nan::New("name").ToLocalChecked()
                                              ).ToLocal(&value);
     if (!success) {
@@ -583,7 +582,7 @@ NAN_METHOD(SharedMap::isData) {
   }
   bool result = true;
   if (value->IsString()) {
-    result = !isMethod(*Nan::Utf8String(value->ToString()));
+    result = !isMethod(*Nan::Utf8String(Nan::To<v8::String>(value).ToLocalChecked()));
   }
   info.GetReturnValue().Set(result);
 }

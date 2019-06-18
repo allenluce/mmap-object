@@ -1,4 +1,3 @@
-#include <nan.h>
 #include "cell.hpp"
 #include "common.hpp"
 
@@ -65,7 +64,7 @@ size_t Cell::SetValue(v8::Local<v8::Value> value, bip::managed_mapped_file *segm
     length = sizeof(double);
     c.reset(new Cell(Nan::To<double>(value).FromJust()));
   } else if (value->IsArrayBufferView()) {
-    v8::Local<v8::Object> buf = value->ToObject();
+    v8::Local<v8::Object> buf = Nan::To<v8::Object>(value).ToLocalChecked();
     char* bufData = node::Buffer::Data(buf);
     size_t bufLen = node::Buffer::Length(buf);
     length = bufLen;

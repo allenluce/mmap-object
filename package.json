@@ -20,8 +20,8 @@
   "license": "ISC",
   "gypfile": true,
   "dependencies": {
-    "async": "^3.0.1",
-    "nan": "^2.11.1",
+    "async": "^3.1.0",
+    "nan": "^2.14.0",
     "node-pre-gyp": "^0.13.0"
   },
   "devDependencies": {

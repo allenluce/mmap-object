@@ -33,13 +33,10 @@ private:
     values() {}
     ~values() {}
   } cell_value;
-  Cell& operator =(const Cell&) = default;
-  Cell(Cell&&) = default;
-  Cell& operator=(Cell&&) & = default;
 public:
   Cell(const char *value, const shared_string::size_type len, char_allocator allocator) : cell_type(BUFFER_TYPE), cell_value(value, len, allocator) {}
   Cell(const char *value, char_allocator allocator) : cell_type(STRING_TYPE), cell_value(value, allocator) {}
-  Cell(const double value) : cell_type(NUMBER_TYPE), cell_value(value) {}
+  explicit Cell(const double value) : cell_type(NUMBER_TYPE), cell_value(value) {}
   Cell(const Cell &cell);
   ~Cell() {
     if (cell_type == STRING_TYPE || cell_type == BUFFER_TYPE)

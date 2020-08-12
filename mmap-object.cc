@@ -9,11 +9,10 @@
     #endif
   #endif
 #endif
+#include <boost/assign.hpp>
 #include <boost/unordered_map.hpp>
 #include <boost/version.hpp>
 #include "cell.hpp"
-#include "aho_corasick.hpp"
-
 #include "common.hpp"
 
 #if BOOST_VERSION < 105500
@@ -44,7 +43,7 @@ typedef bip::basic_string<char, char_traits<char>> char_string;
 #define ALSOOK 0
 
 #define CHECK_VERSION(obj)                                              \
-  if (obj->version != FILEVERSION && obj->version != ALSOOK) {        \
+  if (obj->version != FILEVERSION && obj->version != ALSOOK) {          \
     ostringstream error_stream;                                         \
     error_stream << "File " << *filename << " is format version " << obj->version; \
     error_stream << " (version " << FILEVERSION << " is expected)";     \
@@ -84,10 +83,10 @@ typedef boost::unordered_map<
   map_allocator> PropertyHash;
 
 class SharedMap : public Nan::ObjectWrap {
-  SharedMap(string file_name, size_t file_size, size_t max_file_size) :
+  SharedMap(const string &file_name, size_t file_size, size_t max_file_size) :
     file_name(file_name), file_size(file_size), max_file_size(max_file_size),
     readonly(false), closed(true) {}
-  SharedMap(string file_name) : file_name(file_name), readonly(false), closed(true) {}
+  explicit SharedMap(const string &file_name) : file_name(file_name), readonly(false), closed(true) {}
 
 public:
   static NAN_MODULE_INIT(Init);
@@ -137,33 +136,24 @@ private:
   friend struct CloseWorker;
 };
 
-aho_corasick::trie methodTrie;
-
+boost::unordered_map<std::string, bool> methodList = boost::assign::map_list_of
+                                                   ("bucket_count", true)
+                                                   ("close", true)
+                                                   ("get_free_memory", true)
+                                                   ("get_size", true)
+                                                   ("isClosed", true)
+                                                   ("isData", true)
+                                                   ("isOpen", true)
+                                                   ("load_factor", true)
+                                                   ("max_bucket_count", true)
+                                                   ("max_load_factor", true)
+                                                   ("propertyIsEnumerable", true)
+                                                   ("toString", true)
+                                                   ("fileFormatVersion", true)
+                                                   ("valueOf", true)
+    ;
 bool isMethod(string name) {
-  return methodTrie.contains(name);
-}
-
-void buildMethods() {
-  string methods[] = {
-    "bucket_count",
-    "close",
-    "get_free_memory",
-    "get_size",
-    "isClosed",
-    "isData",
-    "isOpen",
-    "load_factor",
-    "max_bucket_count",
-    "max_load_factor",
-    "propertyIsEnumerable",
-    "toString",
-    "fileFormatVersion",
-    "valueOf"
-  };
-
-  for (const string &method : methods) {
-    methodTrie.insert(method);
-  }
+    return methodList.find(name) != methodList.end();
 }
 
 NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
@@ -272,7 +262,7 @@ NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
   v8::String::Utf8Value data UTF8VALUE(info.Data());
   v8::String::Utf8Value src UTF8VALUE(property);
 
-  if (!property->IsNull() && !property->IsSymbol() && methodTrie.contains(string(*src))) {
+  if (!property->IsNull() && !property->IsSymbol() && isMethod(string(*src))) {
     return;
   }
   auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
@@ -616,7 +606,6 @@ v8::Local<v8::Function> SharedMap::init_methods(v8::Local<v8::FunctionTemplate> 
 }
 
 NAN_MODULE_INIT(SharedMap::Init) {
-  buildMethods();
   // The mmap creator class
   v8::Local<v8::FunctionTemplate> create_tpl = Nan::New<v8::FunctionTemplate>(Create);
   create_tpl->SetClassName(Nan::New("CreateMmap").ToLocalChecked());

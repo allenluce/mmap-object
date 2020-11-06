@@ -2,6 +2,7 @@
   "name": "mmap-object",
   "description": "Wrap a shared memory-mapped file in a plain old object.",
   "main": "lib/mmap-object",
+  "types": "types/mmap-object.d.ts",
   "scripts": {
     "test": "mocha test/test-*",
     "install": "node-pre-gyp install --fallback-to-build"

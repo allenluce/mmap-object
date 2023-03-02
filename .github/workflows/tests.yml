@@ -1,0 +1,29 @@
+name: Tests
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+jobs:
+  Tests:
+    strategy:
+      fail-fast: false
+      max-parallel: 15
+      matrix:
+        node: [6.x, 7.x, 8.x, 9.x, 10.x, 11.x, 12.x, 13.x, 14.x, 15.x, 16.x, 17.x, 18.x, 19.x]
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+      - name: Use Node.js ${{ matrix.node }}
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Install Dependencies
+        run: |
+          npm install --no-progress
+      - name: Environment Information
+        run: npx envinfo
+      - name: Run Node tests
+        run: npm test

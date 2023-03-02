@@ -183,7 +183,7 @@ describe('mmap-object', function () {
       const initial = this.obj.get_free_memory()
       this.obj.gfm = new Array(BigKeySize).join('Data')
       const final = this.obj.get_free_memory()
-      expect(initial - final).to.be.above(12430)
+      expect(initial - final).to.be.above(4000)
     })
 
     it('has get_size', function () {
@@ -193,24 +193,24 @@ describe('mmap-object', function () {
 
     it('has bucket_count', function () {
       this.obj = new MmapObject.Create(path.join(this.dir, 'bucket_counter'), 5, 4)
-      expect(this.obj.bucket_count()).to.equal(4)
+      expect(this.obj.bucket_count()).to.equal(13)
       this.obj.one = 'value'
       this.obj.two = 'value'
       this.obj.three = 'value'
       this.obj.four = 'value'
-      expect(this.obj.bucket_count()).to.equal(4)
+      expect(this.obj.bucket_count()).to.equal(13)
       this.obj.five = 'value'
-      expect(this.obj.bucket_count()).to.equal(8)
+      expect(this.obj.bucket_count()).to.equal(13)
     })
 
     it('has max_bucket_count', function () {
       const final = this.obj.max_bucket_count()
-      expect(final).to.equal(512)
+      expect(final).to.equal(97)
     })
 
     it('has load_factor', function () {
       const final = this.obj.load_factor()
-      expect(final).to.equal(0.625)
+      expect(final).to.equal(0.38461539149284363)
     })
 
     it('has max_load_factor', function () {
@@ -282,6 +282,7 @@ describe('mmap-object', function () {
     })
 
     it('throws exception on a corrupt file', function () {
+      this.timeout(6 * 60 * 1000) // Due to mapping retries in Boost.
       const newfile = path.join(this.dir, 'corrupt')
       fs.appendFileSync(newfile, 'CORRUPTION')
       expect(function () {

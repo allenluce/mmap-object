@@ -1,6 +1,7 @@
 #include <boost/interprocess/managed_mapped_file.hpp>
 #include <boost/interprocess/managed_shared_memory.hpp>
 #include <boost/interprocess/containers/string.hpp>
+#include <sstream>
 #include <nan.h>
 
 namespace bip=boost::interprocess;

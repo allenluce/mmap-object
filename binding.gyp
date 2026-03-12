@@ -1,55 +1,72 @@
 {
-  "variables": {
-    "cflags_cc": [
-      "-Wall",
-      "-Werror",
-      "-O3",
-      "-fexceptions",  # Boost on Linux wants this
-      "-frtti"         # And this too.
-    ],
-    "include_dirs": [
-      "/usr/local/include",
-      "<!(node -e \"require('nan')\")"
-    ],
-    "libraries": [], # 
-    "OTHER_CFLAGS": [  # for Mac builds
-      "-Wno-unused-local-typedefs"
-    ]
-  },
-  "conditions": [
-      [
-        "OS=='win'", {
-          "variables": {
-            "include_dirs": [
-              "<!(echo %BOOST_ROOT%)"
-            ]
-          }
-        }
-      ],
-      [
-        "OS=='linux'", {
-          "variables": {
-            "libraries": [
-              "-lrt"
-            ]
-          }
-        }
-      ],
-      
-    ],
   "targets": [
     {
-      "target_name": "<(module_name)",
-      "sources": [ "mmap-object.cc", "cell.cc" ],
-      "cflags_cc": [ "<@(cflags_cc)" ],
-      "include_dirs": [ "<@(include_dirs)" ],
-      "libraries": [ "<@(libraries)" ],
-        "xcode_settings": {
-        "MACOSX_DEPLOYMENT_TARGET": "10.9",
-        "OTHER_CFLAGS": [
-          "<@(OTHER_CFLAGS)" ,
-            "-stdlib=libc++"
+      "target_name": "mmap-object",
+      "sources": [
+        "mmap-object.cc",
+        "cell.cc"
+      ],
+      "include_dirs": [
+        "<@(include_dirs)",
+        "<!(node -e \"require('nan')\")"
+      ],
+      "libraries": [
+        "<@(libraries)"
+      ],
+      "cflags_cc": [
+        "-Wall",
+        "-Werror",
+        "-O3",
+        "-fexceptions",
+        "-frtti",
+        "-Wno-cast-function-type",
+        "-Wno-deprecated-declarations"
+      ],
+      "conditions": [
+        [
+          "OS=='win'", {
+            "variables": {
+              "include_dirs": [
+                "<!(echo %BOOST_ROOT%)"
+              ],
+              "libraries": []
+            }
+          }
         ],
+        [
+          "OS=='linux'", {
+            "variables": {
+              "include_dirs": [],
+              "libraries": [
+                "-lrt"
+              ]
+            }
+          }
+        ],
+        [
+          "OS=='mac' and '<!(uname -m)'=='arm64'", {
+            "variables": {
+              "include_dirs": [
+                "/opt/homebrew/include"
+              ],
+              "libraries": [
+                "-L/opt/homebrew/lib",
+                "-lboost_system-mt",
+                "-lboost_thread-mt"
+              ]
+            }
+          }
+        ],
+        [
+          "OS=='mac' and '<!(uname -m)'=='x86_64'", {
+            "variables": {
+              "include_dirs": [],
+              "libraries": []
+            }
+          }
+        ]
+      ],
+      "xcode_settings": {
         "GCC_ENABLE_CPP_EXCEPTIONS": "YES",
         "GCC_ENABLE_CPP_RTTI": "-frtti"
       },

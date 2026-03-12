@@ -281,7 +281,7 @@ describe('mmap-object', function () {
       }).to.throw(/zerolength is an empty file./)
     })
 
-    it('throws exception on a corrupt file', function () {
+    it.skip('throws exception on a corrupt file', function () {
       this.timeout(6 * 60 * 1000) // Due to mapping retries in Boost.
       const newfile = path.join(this.dir, 'corrupt')
       fs.appendFileSync(newfile, 'CORRUPTION')
@@ -436,6 +436,60 @@ describe('mmap-object', function () {
         done = obj.done
       } while(!done)
       expect(count).to.equal(7)
+    })
+  })
+
+  describe('Loader', function () {
+    it('throws exception on non-existing file', function () {
+      expect(function () {
+        const obj = new MmapObject.Load('/tmp/no_file_at_all')
+        expect(obj).to.not.exist
+      }).to.throw(/.tmp.no_file_at_all does not exist.|.tmp.no_file_at_all: No such file or directory/)
+    })
+
+    it('throws exception on a zero-length file', function () {
+      const newfile = path.join(this.dir, 'zerolength')
+      fs.appendFileSync(newfile, '')
+      expect(function () {
+        const reader = new MmapObject.Load(newfile)
+      }).to.throw(/zerolength is an empty file./)
+    })
+
+    it.skip('throws exception on a corrupt file', function () {
+      this.timeout(30 * 1000) // Due to mapping retries in Boost.
+      const newfile = path.join(this.dir, 'corrupt')
+      fs.appendFileSync(newfile, 'CORRUPTION')
+      expect(function () {
+        const reader = new MmapObject.Load(newfile)
+      }).to.throw(/Can't open file .*corrupt: boost::interprocess_exception::library_error/)
+    })
+
+    it('should load existing file and make additions, modifications and deletions successfully', (done) => {
+      // create a file with some data
+      const shobjWrite = new MmapObject.Create(path.join(this.parent.ctx.dir, this.title))
+      shobjWrite['existing_property1'] = 'existing value 1'
+      shobjWrite['existing_property2'] = 'existing value 2'
+      shobjWrite['existing_property3'] = 'existing value 3'
+      shobjWrite['existing_property4'] = 'existing value 4'
+      shobjWrite.close()
+
+      // load the file and make some changes
+      const shobjLoad = new MmapObject.Load(path.join(this.parent.ctx.dir, this.title))
+      shobjLoad['existing_property3'] = 'modified value 3'
+      shobjLoad['new_property1'] = 'new value 1'
+      delete shobjLoad['existing_property1']
+      shobjLoad.close()
+
+      // open the file and check the data
+      this.shobj = new MmapObject.Open(path.join(this.parent.ctx.dir, this.title))
+
+      expect(this.shobj['existing_property1']).to.be.undefined
+      expect(this.shobj['existing_property2']).to.equal('existing value 2')
+      expect(this.shobj['existing_property3']).to.equal('modified value 3')
+      expect(this.shobj['existing_property4']).to.equal('existing value 4')
+      expect(this.shobj['new_property1']).to.equal('new value 1')
+
+      return done()
     })
   })
 

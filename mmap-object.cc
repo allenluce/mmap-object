@@ -105,6 +105,7 @@ private:
   void grow(size_t);
   static NAN_METHOD(Create);
   static NAN_METHOD(Open);
+  static NAN_METHOD(Load);
   static NAN_METHOD(Close);
   static NAN_METHOD(isClosed);
   static NAN_METHOD(isOpen);
@@ -160,17 +161,17 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
   auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
   if (self->readonly) {
     Nan::ThrowError("Read-only object.");
-    return;
+    return v8::Intercepted::kYes;
   }
 
   if (self->closed) {
     Nan::ThrowError("Cannot write to closed object.");
-    return;
+    return v8::Intercepted::kYes;
   }
 
   if (property->IsSymbol()) {
     Nan::ThrowError("Symbol properties are not supported.");
-    return;
+    return v8::Intercepted::kYes;
   }
 
   size_t data_length = sizeof(Cell);
@@ -179,7 +180,7 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
     unique_ptr<Cell> c;
     while(true) {
       try {
-        data_length += Cell::SetValue(value, self->map_seg, c, info);
+        data_length += Cell::SetValue(value, self->map_seg, c);
         v8::String::Utf8Value prop UTF8VALUE(property);
         data_length += prop.length();
         char_allocator allocer(self->map_seg->get_segment_manager());
@@ -190,16 +191,18 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
           self->property_map->insert({ *string_key, *c });
         }
         break;
-      } catch(length_error) {
+      } catch(length_error&) {
         self->grow(data_length * 2);
-      } catch(bip::bad_alloc) {
+      } catch(bip::bad_alloc&) {
         self->grow(data_length * 2);
       }
     }
-  } catch(FileTooLarge) {
+  } catch(FileTooLarge&) {
     Nan::ThrowError("File grew too large.");
+    return v8::Intercepted::kNo;
   }
   info.GetReturnValue().Set(value);
+  return v8::Intercepted::kYes;
 }
 
 #define STRINGINDEX                                             \
@@ -209,26 +212,27 @@ NAN_PROPERTY_SETTER(SharedMap::PropSetter) {
 
 NAN_INDEX_GETTER(SharedMap::IndexGetter) {
   STRINGINDEX;
-  SharedMap::PropGetter(prop, info);
+  return SharedMap::PropGetter(prop, info);
 }
 
 NAN_INDEX_SETTER(SharedMap::IndexSetter) {
   STRINGINDEX;
-  SharedMap::PropSetter(prop, value, info);
+  return SharedMap::PropSetter(prop, value, info);
 }
 
 NAN_INDEX_QUERY(SharedMap::IndexQuery) {
   STRINGINDEX;
-  SharedMap::PropQuery(prop, info);
+  return SharedMap::PropQuery(prop, info);
 }
 
 NAN_INDEX_DELETER(SharedMap::IndexDeleter) {
   STRINGINDEX;
-  SharedMap::PropDeleter(prop, info);
+  return SharedMap::PropDeleter(prop, info);
 }
 
 NAN_INDEX_ENUMERATOR(SharedMap::IndexEnumerator) {
   info.GetReturnValue().Set(Nan::New<v8::Array>(v8::None));
+  return v8::Intercepted::kYes;
 }
 
 NAN_METHOD(SharedMap::next) {
@@ -263,7 +267,7 @@ NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
   v8::String::Utf8Value src UTF8VALUE(property);
 
   if (!property->IsNull() && !property->IsSymbol() && isMethod(string(*src))) {
-    return;
+    return v8::Intercepted::kNo;
   }
   auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
   if (property->IsSymbol()) {
@@ -280,16 +284,17 @@ NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
           info.GetReturnValue().Set(obj);
         }, info.This());
       info.GetReturnValue().Set(Nan::GetFunction(iter_template).ToLocalChecked());
+      return v8::Intercepted::kYes;
     }
     // Otherwise don't return anything on symbol accesses
-    return;
+    return v8::Intercepted::kNo;
   }
   if (string(*data) == "prototype") {
-    return;
+    return v8::Intercepted::kNo;
   }
   if (self->closed) {
     Nan::ThrowError("Cannot read from closed object.");
-    return;
+    return v8::Intercepted::kYes;
   }
 
   auto pair = self->property_map->find<char_string, hasher, s_equal_to>
@@ -297,10 +302,11 @@ NAN_PROPERTY_GETTER(SharedMap::PropGetter) {
 
   // If the map doesn't have it, let v8 continue the search.
   if (pair == self->property_map->end())
-    return;
+    return v8::Intercepted::kNo;
 
   Cell *c = &pair->second;
   info.GetReturnValue().Set(c->GetValue());
+  return v8::Intercepted::kYes;
 }
 
 NAN_PROPERTY_QUERY(SharedMap::PropQuery) {
@@ -308,41 +314,42 @@ NAN_PROPERTY_QUERY(SharedMap::PropQuery) {
 
   if (isMethod(string(*src))) {
     info.GetReturnValue().Set(Nan::New<v8::Integer>(v8::ReadOnly | v8::DontEnum | v8::DontDelete));
-    return;
+    return v8::Intercepted::kYes;
   }
   auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
 
   if (self->readonly) {
     info.GetReturnValue().Set(Nan::New<v8::Integer>(v8::ReadOnly | v8::DontDelete));
-    return;
+    return v8::Intercepted::kYes;
   }
 
   info.GetReturnValue().Set(Nan::New<v8::Integer>(v8::None));
+  return v8::Intercepted::kYes;
 }
 
 NAN_PROPERTY_DELETER(SharedMap::PropDeleter) {
   if (property->IsSymbol()) {
     Nan::ThrowError("Symbol properties are not supported for delete.");
-    return;
+    return v8::Intercepted::kYes;
   }
 
   v8::String::Utf8Value src UTF8VALUE(property);
 
   if (isMethod(string(*src))) {
-    info.GetReturnValue().Set(Nan::New<v8::Boolean>(v8::None));
-    return;
+    info.GetReturnValue().Set(Nan::New<v8::Boolean>(false));
+    return v8::Intercepted::kYes;
   }
 
   auto self = Nan::ObjectWrap::Unwrap<SharedMap>(info.This());
 
   if (self->readonly) {
     Nan::ThrowError("Cannot delete from read-only object.");
-    return;
+    return v8::Intercepted::kYes;
   }
 
   if (self->closed) {
     Nan::ThrowError("Cannot delete from closed object.");
-    return;
+    return v8::Intercepted::kYes;
   }
 
   v8::String::Utf8Value prop UTF8VALUE(property);
@@ -350,6 +357,8 @@ NAN_PROPERTY_DELETER(SharedMap::PropDeleter) {
   char_allocator allocer(self->map_seg->get_segment_manager());
   string_key = new shared_string(string(*prop).c_str(), allocer);
   self->property_map->erase(*string_key);
+  info.GetReturnValue().Set(Nan::New<v8::Boolean>(true));
+  return v8::Intercepted::kYes;
 }
 
 NAN_PROPERTY_ENUMERATOR(SharedMap::PropEnumerator) {
@@ -498,6 +507,75 @@ NAN_METHOD(SharedMap::Open) {
   info.GetReturnValue().Set(info.This());
 }
 
+NAN_METHOD(SharedMap::Load) {
+  if (!info.IsConstructCall()) {
+    Nan::ThrowError("Load must be called as a constructor.");
+    return;
+  }
+
+  Nan::Utf8String filename(Nan::To<v8::String>(info[0]).ToLocalChecked());
+  size_t max_file_size = (int)Nan::To<int32_t>(info[1]).FromJust();
+  max_file_size *= 1024;
+
+  struct stat buf;
+  int s = stat(*filename, &buf);
+  if (s == -1 || !S_ISREG(buf.st_mode) || buf.st_size == 0) {
+    ostringstream error_stream;
+    error_stream << *filename;
+    if (s == -1) {
+      error_stream << ": " << strerror(errno);
+    } else if (!S_ISREG(buf.st_mode)) {
+      error_stream << " is not a regular file.";
+    } else {
+      error_stream << " is an empty file.";
+    }
+    Nan::ThrowError(error_stream.str().c_str());
+    return;
+  }
+
+  // Use provided max_file_size or default, but ensure it's at least as large as the current file
+  if (max_file_size == 0) {
+    max_file_size = DEFAULT_MAX_SIZE;
+  }
+  max_file_size = max(max_file_size, (size_t)buf.st_size);
+
+  SharedMap *d = new SharedMap(*filename, (size_t)buf.st_size, max_file_size);
+
+  try {
+    d->map_seg = new bip::managed_mapped_file(bip::open_only, string(*filename).c_str());
+    if (d->map_seg->get_size() != (unsigned long)buf.st_size) {
+      ostringstream error_stream;
+      error_stream << "File " << *filename << " appears to be corrupt (1).";
+      Nan::ThrowError(error_stream.str().c_str());
+      return;
+    }
+    auto find_version = d->map_seg->find<uint32_t>("version");
+    if (find_version.second == 0) {
+      d->version = 0; // No version but should be compatible with V1.
+    } else {
+      d->version = *find_version.first;
+    }
+    CHECK_VERSION(d);
+    auto find_map = d->map_seg->find<PropertyHash>("properties");
+    d->property_map = find_map.first;
+    if (d->property_map == NULL) {
+      ostringstream error_stream;
+      error_stream << "File " << *filename << " appears to be corrupt (2).";
+      Nan::ThrowError(error_stream.str().c_str());
+      return;
+    }
+  } catch(bip::interprocess_exception &ex){
+    ostringstream error_stream;
+    error_stream << "Can't open file " << *filename << ": " << ex.what();
+    Nan::ThrowError(error_stream.str().c_str());
+    return;
+  }
+  d->readonly = false;
+  d->closed = false;
+  d->Wrap(info.This());
+  info.GetReturnValue().Set(info.This());
+}
+
 void SharedMap::grow(size_t size) {
   file_size += size;
   if (file_size > max_file_size) {
@@ -617,6 +695,12 @@ NAN_MODULE_INIT(SharedMap::Init) {
   open_tpl->SetClassName(Nan::New("OpenMmap").ToLocalChecked());
   auto open_fun = init_methods(open_tpl);
   Nan::Set(target, Nan::New("Open").ToLocalChecked(), open_fun);
+
+  // The mmap loader class (for read-write access to existing files)
+  v8::Local<v8::FunctionTemplate> load_tpl = Nan::New<v8::FunctionTemplate>(Load);
+  load_tpl->SetClassName(Nan::New("LoadMmap").ToLocalChecked());
+  auto load_fun = init_methods(load_tpl);
+  Nan::Set(target, Nan::New("Load").ToLocalChecked(), load_fun);
 }
 
-NODE_MODULE(mmap_object, SharedMap::Init)
+NAN_MODULE_WORKER_ENABLED(mmap_object, SharedMap::Init)

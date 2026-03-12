@@ -19,7 +19,7 @@ There are two modes:
 
 ## Unshared Write-only Mode
 
-A single process creates a new file which is mapped to a Javascript
+A single process creates a new file or loads an existing file which is mapped to a Javascript
 object. Setting properties on this object writes those properties to
 the file. You *can* read from the object within this mode but sharing
 an object in write-only mode with other processes is certain to result
@@ -66,10 +66,24 @@ shared_object.close()
 
 // Read a file
 const read_only_shared_object = new Shared.Open('filename')
-console.log(`My value is ${read_only_shared_object.new_key}`)
-console.log(`My other value is ${read_only_shared_object.new_property}`)
+console.log('------------ Open ------------')
+console.log(`'new_key' value is: ${read_only_shared_object.new_key}`)
+console.log(`'new_property' value is: ${read_only_shared_object.new_property}`)
 
 read_only_shared_object.close()
+
+// Modify an existing file
+const mod_shared_object = new Shared.Load('filename')
+console.log('------------ Load ------------')
+mod_shared_object.new_key = 'a modified string value' // modify an existing value
+mod_shared_object.newer_key = 'a newly added string value to old file'  // add a new value
+delete mod_shared_object.new_property    // remove an existing value
+
+console.log(`'new_key' value is: ${mod_shared_object.new_key}`)
+console.log(`'newer_key' value is: ${mod_shared_object.newer_key}`)
+console.log(`'new_property' value is: ${mod_shared_object.new_property}`)
+
+mod_shared_object.close()  // close and write changes
 ```
 
 ## API
@@ -119,6 +133,24 @@ __Example__
 ```js
 // Open up that shared file
 const obj = new Shared.Open('/tmp/sharedmem')
+```
+### new Load(path, [max_file_size])
+
+Loads a previously created mmap file into shared memory. Returns an object that
+provides write access to the shared memory. Throws an exception on error.
+
+__Arguments__
+
+* `path` - The path of the file to create
+* `max_file_size` - *Optional* The largest the file is allowed to grow
+  in kilobites. If data is added beyond this limit, an exception is
+  thrown.  Defaults to 5 gigabytes.
+
+__Example__
+
+```js
+// Load an existing file for writing.
+const obj = new Shared.Load('/tmp/sharedmem')
 ```
 
 ### close()

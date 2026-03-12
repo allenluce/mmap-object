@@ -53,10 +53,10 @@ v8::Local<v8::Value> Cell::GetValue() {
 // unique_ptr to that cell. Return the length of the data stored for
 // the caller's accounting.
 size_t Cell::SetValue(v8::Local<v8::Value> value, bip::managed_mapped_file *segment,
-                      unique_ptr<Cell> &c, const Nan::PropertyCallbackInfo<v8::Value>& info) {
+                      unique_ptr<Cell> &c) {
   size_t length;
   if (value->IsString()) {
-    v8::String::Utf8Value data UTF8VALUE(value);
+    v8::String::Utf8Value data(v8::Isolate::GetCurrent(), value);
     length = data.length();
     char_allocator allocer(segment->get_segment_manager());
     c.reset(new Cell(string(*data).c_str(), allocer));
